@@ -1,18 +1,56 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import '../App.css';
 import logo from '../logo.svg';
 import { useAuth } from '../hooks/useAuth';
+import { getMedicalData, saveMedicalData, MedicalData } from '../services/apiService';
+import { useNavigate } from 'react-router-dom'; // Добавляем useNavigate
 
 function User() {
   const { user, logout, isAuth, error: authError, clearError } = useAuth();
-  const [medicalData, setMedicalData] = useState({
+  const navigate = useNavigate(); // Добавляем навигацию
+  
+  const [medicalData, setMedicalData] = useState<MedicalData>({
     contraindications: '',
     allergens: ''
   });
+  const [savedData, setSavedData] = useState<MedicalData>({
+    contraindications: '',
+    allergens: ''
+  });
+  const [loading, setLoading] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+
+  // Загрузка медицинских данных при монтировании компонента
+  useEffect(() => {
+    if (isAuth) {
+      loadMedicalData();
+    }
+  }, [isAuth]);
+
+  const loadMedicalData = async () => {
+    try {
+      setLoading(true);
+      const data = await getMedicalData();
+      setMedicalData({
+        contraindications: data.contraindications || '',
+        allergens: data.allergens || ''
+      });
+      setSavedData({
+        contraindications: data.contraindications || '',
+        allergens: data.allergens || ''
+      });
+    } catch (error) {
+      console.error('Error loading medical data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleLogout = async () => {
     try {
       await logout();
+      // После успешного выхода перенаправляем на страницу авторизации
+      navigate('/authorisation');
     } catch (error) {
       console.error('Error logging out:', error);
     }
@@ -23,12 +61,34 @@ function User() {
       ...medicalData,
       [e.target.name]: e.target.value
     });
+    // Сбрасываем сообщение об успешном сохранении при изменении данных
+    if (saveMessage) setSaveMessage(null);
   };
 
-  const handleSaveMedical = () => {
-    // Здесь будет логика сохранения медицинских данных
-    alert('Медицинские данные сохранены!');
+  const handleSaveMedical = async () => {
+    try {
+      setLoading(true);
+      setSaveMessage(null);
+      await saveMedicalData(medicalData);
+      setSavedData(medicalData);
+      setSaveMessage('Медицинские данные успешно сохранены!');
+      
+      // Автоматически скрываем сообщение через 3 секунды
+      setTimeout(() => {
+        setSaveMessage(null);
+      }, 3000);
+    } catch (error) {
+      console.error('Error saving medical data:', error);
+      setSaveMessage('Ошибка сохранения медицинских данных');
+    } finally {
+      setLoading(false);
+    }
   };
+
+  // Проверяем, изменились ли данные
+  const hasChanges = 
+    medicalData.contraindications !== savedData.contraindications ||
+    medicalData.allergens !== savedData.allergens;
 
   if (!isAuth) {
     return (
@@ -72,6 +132,19 @@ function User() {
               >
                 ×
               </button>
+            </div>
+          )}
+
+          {saveMessage && (
+            <div style={{ 
+              color: saveMessage.includes('Ошибка') ? 'red' : 'green',
+              marginBottom: '15px', 
+              padding: '10px',
+              backgroundColor: saveMessage.includes('Ошибка') ? 'rgba(255, 0, 0, 0.1)' : 'rgba(0, 255, 0, 0.1)',
+              borderRadius: '4px',
+              border: saveMessage.includes('Ошибка') ? '1px solid red' : '1px solid green'
+            }}>
+              {saveMessage}
             </div>
           )}
           
@@ -122,17 +195,24 @@ function User() {
             />
             <button
               onClick={handleSaveMedical}
+              disabled={loading || !hasChanges}
               style={{
                 padding: '10px 20px',
-                backgroundColor: '#61dafb',
+                backgroundColor: hasChanges ? '#61dafb' : '#ccc',
                 color: '#282c34',
                 border: 'none',
                 borderRadius: '4px',
-                cursor: 'pointer'
+                cursor: hasChanges && !loading ? 'pointer' : 'not-allowed',
+                opacity: loading ? 0.7 : 1
               }}
             >
-              Сохранить медицинские данные
+              {loading ? 'Сохранение...' : 'Сохранить медицинские данные'}
             </button>
+            {!hasChanges && (
+              <p style={{ color: '#61dafb', fontSize: '14px', marginTop: '10px' }}>
+                Все изменения сохранены
+              </p>
+            )}
           </div>
 
           <button

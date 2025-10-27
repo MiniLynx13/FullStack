@@ -28,6 +28,18 @@ export interface LoginData {
   password: string;
 }
 
+export interface MedicalData {
+  contraindications?: string;
+  allergens?: string;
+}
+
+export interface MedicalDataResponse {
+  user_id: number;
+  contraindications?: string;
+  allergens?: string;
+  updated_at: string;
+}
+
 // Сохранение токена в localStorage
 export const saveToken = (token: string): void => {
   localStorage.setItem('auth_token', token);
@@ -60,10 +72,29 @@ const authFetch = async (url: string, options: RequestInit = {}) => {
     (headers as any)['Authorization'] = `Bearer ${token}`;
   }
 
-  return fetch(url, {
+  const response = await fetch(url, {
     ...options,
     headers,
   });
+
+  return response;
+};
+
+// Функция для обработки ошибок
+const handleError = async (response: Response) => {
+  if (!response.ok) {
+    let errorMessage = 'Произошла ошибка';
+    
+    try {
+      const errorData = await response.json();
+      errorMessage = errorData.detail || errorData.message || `Ошибка ${response.status}`;
+    } catch {
+      errorMessage = `Ошибка ${response.status}: ${response.statusText}`;
+    }
+    
+    throw new Error(errorMessage);
+  }
+  return response;
 };
 
 export const checkBackendConnection = async (): Promise<boolean> => {
@@ -86,11 +117,7 @@ export const registerUser = async (userData: RegisterData): Promise<{ message: s
     body: JSON.stringify(userData),
   });
 
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.detail || 'Ошибка регистрации');
-  }
-
+  await handleError(response);
   return response.json();
 };
 
@@ -104,10 +131,7 @@ export const loginUser = async (loginData: LoginData): Promise<AuthResponse> => 
     body: JSON.stringify(loginData),
   });
 
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.detail || 'Ошибка авторизации');
-  }
+  await handleError(response);
 
   const authData = await response.json();
   saveToken(authData.access_token);
@@ -118,9 +142,10 @@ export const loginUser = async (loginData: LoginData): Promise<AuthResponse> => 
 export const logoutUser = async (): Promise<void> => {
   const token = getToken();
   if (token) {
-    await authFetch(`${API_BASE_URL}/logout`, {
+    const response = await authFetch(`${API_BASE_URL}/logout`, {
       method: 'POST',
     });
+    await handleError(response);
   }
   removeToken();
 };
@@ -133,7 +158,41 @@ export const getCurrentUser = async (): Promise<User> => {
     if (response.status === 401) {
       removeToken();
     }
-    throw new Error('Ошибка получения данных пользователя');
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Ошибка получения данных пользователя');
+  }
+
+  return response.json();
+};
+
+// Получение медицинских данных пользователя
+export const getMedicalData = async (): Promise<MedicalDataResponse> => {
+  const response = await authFetch(`${API_BASE_URL}/medical-data`);
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      removeToken();
+    }
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Ошибка получения медицинских данных');
+  }
+
+  return response.json();
+};
+
+// Сохранение медицинских данных пользователя
+export const saveMedicalData = async (medicalData: MedicalData): Promise<MedicalDataResponse> => {
+  const response = await authFetch(`${API_BASE_URL}/medical-data`, {
+    method: 'POST',
+    body: JSON.stringify(medicalData),
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      removeToken();
+    }
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Ошибка сохранения медицинских данных');
   }
 
   return response.json();

@@ -3,8 +3,7 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import sqlite3
 import hashlib
 import secrets
 from datetime import datetime, timedelta
@@ -29,15 +28,11 @@ app.add_middleware(
 # Security
 security = HTTPBearer()
 
-# Подключение к базе данных
+# Подключение к SQLite базе данных
 def get_db_connection():
-    return psycopg2.connect(
-        host="localhost",
-        database="users",
-        user="admin",
-        password="MiniLynx8",
-        cursor_factory=RealDictCursor
-    )
+    conn = sqlite3.connect('app.db')
+    conn.row_factory = sqlite3.Row  # Чтобы получать результаты как словари
+    return conn
 
 # Модели Pydantic
 class Response(BaseModel):
@@ -63,6 +58,16 @@ class TokenResponse(BaseModel):
     token_type: str
     user: UserResponse
 
+class MedicalData(BaseModel):
+    contraindications: Optional[str] = None
+    allergens: Optional[str] = None
+
+class MedicalDataResponse(BaseModel):
+    user_id: int
+    contraindications: Optional[str] = None
+    allergens: Optional[str] = None
+    updated_at: str
+
 # Инициализация базы данных
 def init_db():
     conn = get_db_connection()
@@ -71,7 +76,7 @@ def init_db():
     # Создание таблицы пользователей
     cur.execute('''
         CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             username VARCHAR(50) UNIQUE NOT NULL,
             email VARCHAR(100) UNIQUE NOT NULL,
             password_hash VARCHAR(255) NOT NULL,
@@ -82,7 +87,7 @@ def init_db():
     # Создание таблицы токенов
     cur.execute('''
         CREATE TABLE IF NOT EXISTS user_tokens (
-            id SERIAL PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER REFERENCES users(id),
             token VARCHAR(255) UNIQUE NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -90,8 +95,19 @@ def init_db():
         )
     ''')
     
+    # Создание таблицы медицинских данных
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS user_medical_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER UNIQUE REFERENCES users(id),
+            contraindications TEXT,
+            allergens TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    ''')
+    
     conn.commit()
-    cur.close()
     conn.close()
 
 # Хеширование пароля
@@ -111,11 +127,10 @@ def get_user_by_token(token: str):
         SELECT u.id, u.username, u.email, u.created_at 
         FROM users u 
         JOIN user_tokens ut ON u.id = ut.user_id 
-        WHERE ut.token = %s AND ut.expires_at > %s
-    ''', (token, datetime.now()))
+        WHERE ut.token = ? AND ut.expires_at > ?
+    ''', (token, datetime.now().isoformat()))
     
     user = cur.fetchone()
-    cur.close()
     conn.close()
     
     return user
@@ -131,12 +146,11 @@ async def register(user_data: UserRegister):
     cur = conn.cursor()
     
     # Проверяем, существует ли пользователь
-    cur.execute('SELECT id FROM users WHERE username = %s OR email = %s', 
+    cur.execute('SELECT id FROM users WHERE username = ? OR email = ?', 
                 (user_data.username, user_data.email))
     existing_user = cur.fetchone()
     
     if existing_user:
-        cur.close()
         conn.close()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -147,16 +161,30 @@ async def register(user_data: UserRegister):
     password_hash = hash_password(user_data.password)
     
     cur.execute(
-        'INSERT INTO users (username, email, password_hash) VALUES (%s, %s, %s) RETURNING id, username, email, created_at',
+        'INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)',
         (user_data.username, user_data.email, password_hash)
+    )
+    
+    user_id = cur.lastrowid
+    
+    cur.execute(
+        'SELECT id, username, email, created_at FROM users WHERE id = ?',
+        (user_id,)
     )
     
     new_user = cur.fetchone()
     conn.commit()
-    cur.close()
     conn.close()
     
-    return {"message": "Пользователь успешно зарегистрирован", "user": new_user}
+    return {
+        "message": "Пользователь успешно зарегистрирован", 
+        "user": {
+            "id": new_user['id'],
+            "username": new_user['username'],
+            "email": new_user['email'],
+            "created_at": new_user['created_at']
+        }
+    }
 
 # Авторизация пользователя
 @app.post("/login")
@@ -167,14 +195,13 @@ async def login(login_data: UserLogin):
     # Ищем пользователя
     password_hash = hash_password(login_data.password)
     cur.execute(
-        'SELECT id, username, email, created_at FROM users WHERE username = %s AND password_hash = %s',
+        'SELECT id, username, email, created_at FROM users WHERE username = ? AND password_hash = ?',
         (login_data.username, password_hash)
     )
     
     user = cur.fetchone()
     
     if not user:
-        cur.close()
         conn.close()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -187,12 +214,11 @@ async def login(login_data: UserLogin):
     
     # Сохраняем токен в базе
     cur.execute(
-        'INSERT INTO user_tokens (user_id, token, expires_at) VALUES (%s, %s, %s)',
-        (user['id'], token, expires_at)
+        'INSERT INTO user_tokens (user_id, token, expires_at) VALUES (?, ?, ?)',
+        (user['id'], token, expires_at.isoformat())
     )
     
     conn.commit()
-    cur.close()
     conn.close()
     
     return TokenResponse(
@@ -202,7 +228,7 @@ async def login(login_data: UserLogin):
             id=user['id'],
             username=user['username'],
             email=user['email'],
-            created_at=user['created_at'].isoformat()
+            created_at=user['created_at']
         )
     )
 
@@ -221,7 +247,103 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         id=user['id'],
         username=user['username'],
         email=user['email'],
-        created_at=user['created_at'].isoformat()
+        created_at=user['created_at']
+    )
+
+# Получение медицинских данных пользователя
+@app.get("/medical-data")
+async def get_medical_data(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    user = get_user_by_token(credentials.credentials)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный или просроченный токен"
+        )
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    cur.execute(
+        'SELECT user_id, contraindications, allergens, updated_at FROM user_medical_data WHERE user_id = ?',
+        (user['id'],)
+    )
+    
+    medical_data = cur.fetchone()
+    conn.close()
+    
+    if medical_data:
+        return MedicalDataResponse(
+            user_id=medical_data['user_id'],
+            contraindications=medical_data['contraindications'],
+            allergens=medical_data['allergens'],
+            updated_at=medical_data['updated_at']
+        )
+    else:
+        return MedicalDataResponse(
+            user_id=user['id'],
+            contraindications=None,
+            allergens=None,
+            updated_at=datetime.now().isoformat()
+        )
+
+# Сохранение медицинских данных пользователя
+@app.post("/medical-data")
+async def save_medical_data(
+    medical_data: MedicalData,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    user = get_user_by_token(credentials.credentials)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный или просроченный токен"
+        )
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Проверяем, существует ли запись для пользователя
+    cur.execute(
+        'SELECT id FROM user_medical_data WHERE user_id = ?',
+        (user['id'],)
+    )
+    
+    existing_data = cur.fetchone()
+    
+    if existing_data:
+        # Обновляем существующую запись
+        cur.execute(
+            '''UPDATE user_medical_data 
+               SET contraindications = ?, allergens = ?, updated_at = CURRENT_TIMESTAMP 
+               WHERE user_id = ?''',
+            (medical_data.contraindications, medical_data.allergens, user['id'])
+        )
+    else:
+        # Создаем новую запись
+        cur.execute(
+            '''INSERT INTO user_medical_data (user_id, contraindications, allergens) 
+               VALUES (?, ?, ?)''',
+            (user['id'], medical_data.contraindications, medical_data.allergens)
+        )
+    
+    conn.commit()
+    
+    # Получаем обновленные данные
+    cur.execute(
+        'SELECT user_id, contraindications, allergens, updated_at FROM user_medical_data WHERE user_id = ?',
+        (user['id'],)
+    )
+    
+    updated_data = cur.fetchone()
+    conn.close()
+    
+    return MedicalDataResponse(
+        user_id=updated_data['user_id'],
+        contraindications=updated_data['contraindications'],
+        allergens=updated_data['allergens'],
+        updated_at=updated_data['updated_at']
     )
 
 # Выход из системы
@@ -230,12 +352,15 @@ async def logout(credentials: HTTPAuthorizationCredentials = Depends(security)):
     conn = get_db_connection()
     cur = conn.cursor()
     
-    cur.execute('DELETE FROM user_tokens WHERE token = %s', (credentials.credentials,))
+    cur.execute('DELETE FROM user_tokens WHERE token = ?', (credentials.credentials,))
     conn.commit()
-    cur.close()
     conn.close()
     
     return {"message": "Успешный выход из системы"}
+
+@app.get("/")
+async def root():
+    return {"message": "Backend is running!"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -40,7 +40,10 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const clearError = () => setError(null);
+  const clearError = () => {
+    console.log('Clearing error');
+    setError(null);
+  };
 
   useEffect(() => {
     const initAuth = async () => {
@@ -52,6 +55,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         } catch (error) {
           console.error('Error fetching user data:', error);
           setError('Ошибка загрузки данных пользователя');
+          localStorage.removeItem('auth_token');
         }
       }
       setLoading(false);
@@ -62,12 +66,13 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
   const login = async (loginData: LoginData) => {
     setLoading(true);
-    setError(null);
     try {
       const authData = await loginUser(loginData);
       setUser(authData.user);
+      setError(null); // Очищаем ошибку только при успехе
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Ошибка авторизации';
+      console.log('Setting auth error in login:', errorMessage);
       setError(errorMessage);
       throw err;
     } finally {
@@ -77,7 +82,6 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
   const register = async (registerData: RegisterData) => {
     setLoading(true);
-    setError(null);
     try {
       const result = await registerUser(registerData);
       // После регистрации автоматически логиним пользователя
@@ -86,8 +90,10 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         password: registerData.password
       });
       setUser(authData.user);
+      setError(null); // Очищаем ошибку только при успехе
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Ошибка регистрации';
+      console.log('Setting auth error in register:', errorMessage);
       setError(errorMessage);
       throw err;
     } finally {
@@ -97,7 +103,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
   const logout = async () => {
     setLoading(true);
-    setError(null);
+    setError(null); // При выходе очищаем ошибки
     try {
       await logoutUser();
       setUser(null);
@@ -120,6 +126,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     isAuth: !!user,
     clearError,
   };
+
+  console.log('AuthProvider state:', { user, loading, error });
 
   return (
     <AuthContext.Provider value={value}>

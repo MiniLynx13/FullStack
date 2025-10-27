@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 import '../App.css';
 import logo from '../logo.svg';
 import { useAuth } from '../hooks/useAuth';
+import { useNavigate } from 'react-router-dom';
 
 function Authorisation() {
-  const { login, register, loading: authLoading, error: authError, clearError } = useAuth();
+  const { login, register, loading: authLoading, error: authError, clearError, isAuth } = useAuth();
+  const navigate = useNavigate();
   
   const [isLogin, setIsLogin] = useState(true);
   const [formData, setFormData] = useState({
@@ -15,26 +17,33 @@ function Authorisation() {
   });
   const [localError, setLocalError] = useState<string | null>(null);
 
+  // Переадресация при успешной авторизации
+  useEffect(() => {
+    if (isAuth) {
+      navigate('/user');
+    }
+  }, [isAuth, navigate]);
+
   // Очищаем ошибки при смене режима формы
   useEffect(() => {
     clearError();
     setLocalError(null);
-  }, [isLogin, clearError]);
+  }, [isLogin]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value
     });
-    // Очищаем ошибки при изменении формы
-    if (localError) setLocalError(null);
-    if (authError) clearError();
+    // Очищаем только локальные ошибки при изменении
+    if (localError) {
+      setLocalError(null);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLocalError(null);
-    clearError();
 
     // Валидация
     if (!formData.username.trim() || !formData.password.trim()) {
@@ -71,8 +80,7 @@ function Authorisation() {
         });
       }
     } catch (err) {
-      // Ошибка уже обработана в useAuth
-      console.error('Auth error:', err);
+      console.error('Auth error in component:', err);
     }
   };
 
@@ -84,6 +92,8 @@ function Authorisation() {
       password: '',
       confirmPassword: ''
     });
+    setLocalError(null);
+    clearError(); // Очищаем ошибки только при смене режима
   };
 
   return (
@@ -136,7 +146,7 @@ function Authorisation() {
                   width: '100%',
                   padding: '10px',
                   fontSize: '16px',
-                  border: '1px solid #ccc',
+                  border: (localError || authError) ? '1px solid red' : '1px solid #ccc',
                   borderRadius: '4px',
                   boxSizing: 'border-box'
                 }}
@@ -156,7 +166,7 @@ function Authorisation() {
                     width: '100%',
                     padding: '10px',
                     fontSize: '16px',
-                    border: '1px solid #ccc',
+                    border: (localError || authError) ? '1px solid red' : '1px solid #ccc',
                     borderRadius: '4px',
                     boxSizing: 'border-box'
                   }}
@@ -176,7 +186,7 @@ function Authorisation() {
                   width: '100%',
                   padding: '10px',
                   fontSize: '16px',
-                  border: '1px solid #ccc',
+                  border: (localError || authError) ? '1px solid red' : '1px solid #ccc',
                   borderRadius: '4px',
                   boxSizing: 'border-box'
                 }}
@@ -196,7 +206,7 @@ function Authorisation() {
                     width: '100%',
                     padding: '10px',
                     fontSize: '16px',
-                    border: '1px solid #ccc',
+                    border: localError && localError.includes('Пароли не совпадают') ? '1px solid red' : '1px solid #ccc',
                     borderRadius: '4px',
                     boxSizing: 'border-box'
                   }}
@@ -204,16 +214,46 @@ function Authorisation() {
               </div>
             )}
 
-            {(localError || authError) && (
+            {/* Ошибки локальной валидации */}
+            {localError && (
               <div style={{ 
                 color: 'red', 
                 marginBottom: '15px', 
                 padding: '10px',
                 backgroundColor: 'rgba(255, 0, 0, 0.1)',
                 borderRadius: '4px',
-                border: '1px solid red'
+                border: '1px solid red',
+                fontSize: '14px'
               }}>
-                {localError || authError}
+                {localError}
+              </div>
+            )}
+
+            {/* Ошибки от сервера */}
+            {authError && (
+              <div style={{ 
+                color: 'red', 
+                marginBottom: '15px', 
+                padding: '10px',
+                backgroundColor: 'rgba(255, 0, 0, 0.1)',
+                borderRadius: '4px',
+                border: '1px solid red',
+                fontSize: '14px'
+              }}>
+                {authError}
+                <button 
+                  onClick={clearError}
+                  style={{
+                    marginLeft: '10px',
+                    background: 'none',
+                    border: 'none',
+                    color: 'red',
+                    cursor: 'pointer',
+                    float: 'right'
+                  }}
+                >
+                  ×
+                </button>
               </div>
             )}
 

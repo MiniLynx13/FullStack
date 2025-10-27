@@ -6,16 +6,19 @@ import User from './pages/User';
 import Calories from './pages/Calories';
 import Photo from './pages/Photo';
 import Error404 from './pages/Error404';
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link, useNavigate } from 'react-router-dom'; // Добавляем useNavigate
 import { AuthProvider, useAuth } from './hooks/useAuth';
 
 // Компонент навигации с учетом авторизации
 const Navigation: React.FC = () => {
   const { isAuth, user, logout } = useAuth();
+  const navigate = useNavigate(); // Добавляем навигацию
 
   const handleLogout = async () => {
     try {
       await logout();
+      // После выхода перенаправляем на страницу авторизации
+      navigate('/authorisation');
     } catch (error) {
       console.error('Error logging out:', error);
     }
