@@ -110,6 +110,23 @@ def init_db():
     conn.commit()
     conn.close()
 
+# Очистка просроченных токенов
+def cleanup_expired_tokens():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    cur.execute('DELETE FROM user_tokens WHERE expires_at <= ?', 
+                (datetime.now().isoformat(),))
+    
+    deleted_count = cur.rowcount
+    conn.commit()
+    conn.close()
+    
+    if deleted_count > 0:
+        print(f"Удалено {deleted_count} просроченных токенов")
+    
+    return deleted_count
+
 # Хеширование пароля
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
@@ -122,6 +139,9 @@ def generate_token() -> str:
 def get_user_by_token(token: str):
     conn = get_db_connection()
     cur = conn.cursor()
+    
+    # Сначала очищаем просроченные токены
+    cleanup_expired_tokens()
     
     cur.execute('''
         SELECT u.id, u.username, u.email, u.created_at 
@@ -138,6 +158,9 @@ def get_user_by_token(token: str):
 @app.on_event("startup")
 async def startup_event():
     init_db()
+    # Очищаем просроченные токены при запуске приложения
+    cleaned_count = cleanup_expired_tokens()
+    print(f"При запуске удалено {cleaned_count} просроченных токенов")
 
 # Регистрация пользователя
 @app.post("/register")
@@ -357,6 +380,12 @@ async def logout(credentials: HTTPAuthorizationCredentials = Depends(security)):
     conn.close()
     
     return {"message": "Успешный выход из системы"}
+
+# Эндпоинт для принудительной очистки просроченных токенов
+@app.post("/cleanup-tokens")
+async def cleanup_tokens():
+    cleaned_count = cleanup_expired_tokens()
+    return {"message": f"Удалено {cleaned_count} просроченных токенов"}
 
 @app.get("/")
 async def root():

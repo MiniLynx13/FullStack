@@ -17,7 +17,7 @@ function Authorisation() {
   });
   const [localError, setLocalError] = useState<string | null>(null);
 
-  // Переадресация при успешной авторизации
+  // Редирект если пользователь уже авторизован
   useEffect(() => {
     if (isAuth) {
       navigate('/user');
@@ -35,7 +35,6 @@ function Authorisation() {
       ...formData,
       [e.target.name]: e.target.value
     });
-    // Очищаем только локальные ошибки при изменении
     if (localError) {
       setLocalError(null);
     }
@@ -45,7 +44,6 @@ function Authorisation() {
     e.preventDefault();
     setLocalError(null);
 
-    // Валидация
     if (!formData.username.trim() || !formData.password.trim()) {
       setLocalError('Заполните все обязательные поля');
       return;
@@ -79,6 +77,7 @@ function Authorisation() {
           password: formData.password
         });
       }
+      // После успешной авторизации/регистрации редирект произойдет автоматически из-за useEffect
     } catch (err) {
       console.error('Auth error in component:', err);
     }
@@ -93,8 +92,20 @@ function Authorisation() {
       confirmPassword: ''
     });
     setLocalError(null);
-    clearError(); // Очищаем ошибки только при смене режима
+    clearError();
   };
+
+  // Показываем заглушку во время редиректа или если уже авторизован
+  if (isAuth) {
+    return (
+      <div className="App">
+        <header className="App-header">
+          <img src={logo} className="App-logo" alt="logo" />
+          <p>Перенаправление в личный кабинет...</p>
+        </header>
+      </div>
+    );
+  }
 
   return (
     <div className="App">
@@ -214,7 +225,6 @@ function Authorisation() {
               </div>
             )}
 
-            {/* Ошибки локальной валидации */}
             {localError && (
               <div style={{ 
                 color: 'red', 
@@ -229,7 +239,6 @@ function Authorisation() {
               </div>
             )}
 
-            {/* Ошибки от сервера */}
             {authError && (
               <div style={{ 
                 color: 'red', 

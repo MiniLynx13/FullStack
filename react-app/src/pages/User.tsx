@@ -3,11 +3,11 @@ import '../App.css';
 import logo from '../logo.svg';
 import { useAuth } from '../hooks/useAuth';
 import { getMedicalData, saveMedicalData, MedicalData } from '../services/apiService';
-import { useNavigate } from 'react-router-dom'; // Добавляем useNavigate
+import { useNavigate } from 'react-router-dom';
 
 function User() {
   const { user, logout, isAuth, error: authError, clearError } = useAuth();
-  const navigate = useNavigate(); // Добавляем навигацию
+  const navigate = useNavigate();
   
   const [medicalData, setMedicalData] = useState<MedicalData>({
     contraindications: '',
@@ -19,6 +19,13 @@ function User() {
   });
   const [loading, setLoading] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+
+  // Редирект если пользователь не авторизован
+  useEffect(() => {
+    if (!isAuth) {
+      navigate('/authorisation');
+    }
+  }, [isAuth, navigate]);
 
   // Загрузка медицинских данных при монтировании компонента
   useEffect(() => {
@@ -49,7 +56,6 @@ function User() {
   const handleLogout = async () => {
     try {
       await logout();
-      // После успешного выхода перенаправляем на страницу авторизации
       navigate('/authorisation');
     } catch (error) {
       console.error('Error logging out:', error);
@@ -61,7 +67,6 @@ function User() {
       ...medicalData,
       [e.target.name]: e.target.value
     });
-    // Сбрасываем сообщение об успешном сохранении при изменении данных
     if (saveMessage) setSaveMessage(null);
   };
 
@@ -73,7 +78,6 @@ function User() {
       setSavedData(medicalData);
       setSaveMessage('Медицинские данные успешно сохранены!');
       
-      // Автоматически скрываем сообщение через 3 секунды
       setTimeout(() => {
         setSaveMessage(null);
       }, 3000);
@@ -85,18 +89,17 @@ function User() {
     }
   };
 
-  // Проверяем, изменились ли данные
   const hasChanges = 
     medicalData.contraindications !== savedData.contraindications ||
     medicalData.allergens !== savedData.allergens;
 
+  // Показываем заглушку во время редиректа или если не авторизован
   if (!isAuth) {
     return (
       <div className="App">
         <header className="App-header">
           <img src={logo} className="App-logo" alt="logo" />
-          <h3>Пользователь</h3>
-          <p>Пожалуйста, войдите в систему чтобы просмотреть эту страницу</p>
+          <p>Перенаправление на страницу авторизации...</p>
         </header>
       </div>
     );

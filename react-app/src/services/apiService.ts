@@ -107,6 +107,16 @@ export const checkBackendConnection = async (): Promise<boolean> => {
   }
 };
 
+// Очистка просроченных токенов (может быть использована для профилактической очистки)
+export const cleanupExpiredTokens = async (): Promise<{ message: string }> => {
+  const response = await authFetch(`${API_BASE_URL}/cleanup-tokens`, {
+    method: 'POST',
+  });
+
+  await handleError(response);
+  return response.json();
+};
+
 // Регистрация пользователя
 export const registerUser = async (userData: RegisterData): Promise<{ message: string; user: User }> => {
   const response = await fetch(`${API_BASE_URL}/register`, {
