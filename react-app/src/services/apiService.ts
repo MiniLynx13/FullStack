@@ -63,13 +63,23 @@ export const isAuthenticated = (): boolean => {
 // Базовый запрос с авторизацией
 const authFetch = async (url: string, options: RequestInit = {}) => {
   const token = getToken();
-  const headers = {
-    'Content-Type': 'application/json',
-    ...options.headers,
-  };
+  
+  // Создаем заголовки с правильным типом
+  const headers: Record<string, string> = {};
+
+  // Копируем существующие заголовки
+  if (options.headers) {
+    Object.entries(options.headers).forEach(([key, value]) => {
+      headers[key] = value as string;
+    });
+  }
+
+  if (!(options.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   if (token) {
-    (headers as any)['Authorization'] = `Bearer ${token}`;
+    headers['Authorization'] = `Bearer ${token}`;
   }
 
   const response = await fetch(url, {
@@ -206,4 +216,70 @@ export const saveMedicalData = async (medicalData: MedicalData): Promise<Medical
   }
 
   return response.json();
+};
+
+export interface AnalyzedIngredient {
+  name: string;
+  is_allergen: boolean;
+  is_contraindication: boolean;
+}
+
+export interface ImageAnalysisResponse {
+  ingredients: AnalyzedIngredient[];
+  warnings: string[];
+  original_response: string;
+}
+
+// Анализ изображения
+export const analyzeImage = async (imageFile: File): Promise<ImageAnalysisResponse> => {
+  const formData = new FormData();
+  formData.append('image', imageFile);
+
+  console.log('Отправка изображения:', imageFile.name, 'размер:', imageFile.size, 'тип:', imageFile.type);
+
+  try {
+    const response = await authFetch(`${API_BASE_URL}/analyze-image`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        removeToken();
+      }
+      
+      let errorDetail = `Ошибка ${response.status}: ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        
+        if (Array.isArray(errorData.detail)) {
+          errorDetail = errorData.detail.map((err: any) => {
+            if (typeof err === 'string') return err;
+            if (err.msg) return err.msg;
+            if (err.loc && err.msg) return `${err.loc.join('.')}: ${err.msg}`;
+            return JSON.stringify(err);
+          }).join(', ');
+        } else if (typeof errorData.detail === 'string') {
+          errorDetail = errorData.detail;
+        } else if (errorData.message) {
+          errorDetail = errorData.message;
+        }
+      } catch (parseError) {
+        try {
+          const text = await response.text();
+          if (text) errorDetail = text;
+        } catch {
+          // Игнорируем ошибки при чтении текста
+        }
+      }
+      
+      console.error('Ошибка анализа изображения:', errorDetail);
+      throw new Error(errorDetail);
+    }
+
+    return response.json();
+  } catch (error) {
+    console.error('Network error:', error);
+    throw new Error('Ошибка сети при отправке изображения');
+  }
 };

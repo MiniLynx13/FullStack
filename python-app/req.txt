@@ -1,2 +1,8 @@
 fastapi[all]
+ollama
+huggingface-hub
+pandas
+tqdm
+python-multipart
+Pillow
 requests

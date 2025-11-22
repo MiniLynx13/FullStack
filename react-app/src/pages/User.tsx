@@ -162,7 +162,7 @@ function User() {
             <h4>Медицинские противопоказания</h4>
             <textarea
               name="contraindications"
-              placeholder="Укажите ваши медицинские противопоказания..."
+              placeholder="Укажите ваши медицинские противопоказания (на английском): Fish, milk..."
               value={medicalData.contraindications}
               onChange={handleMedicalChange}
               rows={4}
@@ -182,7 +182,7 @@ function User() {
             <h4>Аллергены</h4>
             <textarea
               name="allergens"
-              placeholder="Укажите ваши аллергены..."
+              placeholder="Укажите ваши аллергены (на английском): Fish, milk..."
               value={medicalData.allergens}
               onChange={handleMedicalChange}
               rows={4}

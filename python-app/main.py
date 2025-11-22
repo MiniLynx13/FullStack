@@ -1,5 +1,5 @@
 import uvicorn
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
@@ -7,8 +7,14 @@ import sqlite3
 import hashlib
 import secrets
 from datetime import datetime, timedelta
-import os
 from typing import Optional
+import base64
+from PIL import Image
+import ollama
+import json
+import traceback
+import re
+import io
 
 app = FastAPI()
 
@@ -386,6 +392,201 @@ async def logout(credentials: HTTPAuthorizationCredentials = Depends(security)):
 async def cleanup_tokens():
     cleaned_count = cleanup_expired_tokens()
     return {"message": f"Удалено {cleaned_count} просроченных токенов"}
+
+@app.post("/analyze-image")
+async def analyze_image(
+    image: UploadFile = File(...),
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    user = get_user_by_token(credentials.credentials)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный или просроченный токен"
+        )
+    
+    # Получаем медицинские данные пользователя
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        'SELECT contraindications, allergens FROM user_medical_data WHERE user_id = ?',
+        (user['id'],)
+    )
+    medical_data = cur.fetchone()
+    conn.close()
+    
+    # Проверяем файл
+    if not image:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Файл не предоставлен"
+        )
+    
+    # Проверяем тип файла
+    allowed_content_types = ['image/jpeg', 'image/png', 'image/jpg', 'image/gif', 'image/bmp', 'image/webp']
+    if image.content_type not in allowed_content_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Неподдерживаемый тип файла. Разрешены: {', '.join(allowed_content_types)}"
+        )
+    
+    try:
+        # Читаем данные изображения
+        image_data = await image.read()
+        
+        if len(image_data) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Файл пустой"
+            )
+        
+        # Проверяем размер файла (максимум 10MB)
+        if len(image_data) > 10 * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Размер файла превышает 10MB"
+            )
+        
+        # Проверяем, что это валидное изображение
+        try:
+            with Image.open(io.BytesIO(image_data)) as img:
+                img.verify()
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Некорректный формат изображения: {str(e)}"
+            )
+        
+        # Конвертируем изображение в base64
+        image_base64 = base64.b64encode(image_data).decode('utf-8')
+        
+        # Подготавливаем промпт
+        prompt = """Analyze this image and list all ingredients you can identify or assume in JSON format. Use this exact structure: {"ingredients": ["ingredient1", "ingredient2", ...]}"""
+        
+        # Отправляем запрос к Ollama
+        try:
+            response = ollama.chat(
+                model='qwen3-vl:4b',
+                messages=[
+                    {
+                        'role': 'user',
+                        'content': prompt,
+                        'images': [image_base64]
+                    }
+                ],
+                options={
+                    'timeout': 300000 # 5 минут в миллисекундах
+                }
+            )
+        except Exception as e:
+            print(f"Ollama error: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Ошибка при обращении к модели AI: {str(e)}"
+            )
+        
+        # Извлекаем JSON из ответа
+        content = response['message']['content']
+        print(f"Ollama response: {content}")
+        
+        # Пытаемся найти JSON в ответе
+        json_match = re.search(r'\{[^{}]*\{.*\}[^{}]*\}|\{.*\}', content, re.DOTALL)
+        ingredients_list = []
+        
+        if json_match:
+            json_str = json_match.group()
+            try:
+                # Очищаем JSON строку
+                json_str = re.sub(r'```json|```', '', json_str).strip()
+                ingredients_data = json.loads(json_str)
+                ingredients_list = ingredients_data.get('ingredients', [])
+                if not isinstance(ingredients_list, list):
+                    ingredients_list = [str(ingredients_list)]
+            except json.JSONDecodeError as e:
+                print(f"JSON decode error: {e}")
+                # Если не удалось распарсить JSON, извлекаем ингредиенты другим способом
+                ingredients_list = [line.strip() for line in content.split('\n') 
+                                  if line.strip() and not line.strip().startswith('{') 
+                                  and not line.strip().startswith('}')]
+        else:
+            # Если JSON не найден, пытаемся извлечь ингредиенты по строкам
+            ingredients_list = [line.strip() for line in content.split('\n') 
+                              if line.strip() and len(line.strip()) > 3]
+        
+        # Если список пустой, используем весь контент как один ингредиент
+        if not ingredients_list:
+            ingredients_list = [content.strip()]
+        
+        # Очищаем ингредиенты от лишних символов
+        cleaned_ingredients = []
+        for ingredient in ingredients_list:
+            if ingredient and isinstance(ingredient, str):
+                # Убираем маркеры списка, кавычки и лишние пробелы
+                clean_ingredient = re.sub(r'^[\-\*•\d\.\s"\']+|[\-\*•\d\.\s"\']+$', '', ingredient)
+                if clean_ingredient and len(clean_ingredient) > 1:
+                    cleaned_ingredients.append(clean_ingredient)
+        
+        if not cleaned_ingredients:
+            cleaned_ingredients = ["Не удалось определить ингредиенты"]
+        
+        # Проверяем на аллергены если есть медицинские данные
+        allergens = []
+        contraindications = []
+        
+        if medical_data:
+            if medical_data['allergens']:
+                allergens = [a.strip().lower() for a in re.split(r'[,;.\s\n]+', medical_data['allergens']) if a.strip()]
+            if medical_data['contraindications']:
+                contraindications = [c.strip().lower() for c in re.split(r'[,;.\s\n]+', medical_data['contraindications']) if c.strip()]
+        
+        # Анализируем ингредиенты на наличие аллергенов
+        analyzed_ingredients = []
+        warnings = []
+        
+        for ingredient in cleaned_ingredients:
+            ingredient_lower = ingredient.lower()
+            is_allergen = False
+            is_contraindication = False
+            
+            # Проверяем на аллергены
+            for allergen in allergens:
+                if allergen and allergen in ingredient_lower:
+                    is_allergen = True
+                    break
+            
+            # Проверяем на противопоказания
+            for contra in contraindications:
+                if contra and contra in ingredient_lower:
+                    is_contraindication = True
+                    break
+            
+            analyzed_ingredients.append({
+                'name': ingredient,
+                'is_allergen': is_allergen,
+                'is_contraindication': is_contraindication
+            })
+            
+            if is_allergen:
+                warnings.append(f"Аллерген обнаружен: {ingredient}")
+            if is_contraindication:
+                warnings.append(f"Противопоказание: {ingredient}")
+        
+        return {
+            "ingredients": analyzed_ingredients,
+            "warnings": warnings,
+            "original_response": content
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка при обработке изображения: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка при обработке изображения: {str(e)}"
+        )
 
 @app.get("/")
 async def root():
