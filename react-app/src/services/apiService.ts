@@ -60,6 +60,28 @@ export const isAuthenticated = (): boolean => {
   return !!getToken();
 };
 
+export interface SaveAnalysisRequest {
+  analysis_result: ImageAnalysisResponse;
+  ingredients_count: number;
+  warnings_count: number;
+}
+
+export interface SavedAnalysis {
+  id: number;
+  user_id: number;
+  image_url: string;
+  analysis_result: ImageAnalysisResponse;
+  ingredients_count: number;
+  warnings_count: number;
+  created_at: string;
+  original_analysis_id?: number;
+  is_reanalysis?: boolean;
+}
+
+export interface SavedAnalysesResponse {
+  analyses: SavedAnalysis[];
+}
+
 // Базовый запрос с авторизацией
 const authFetch = async (url: string, options: RequestInit = {}) => {
   const token = getToken();
@@ -282,4 +304,116 @@ export const analyzeImage = async (imageFile: File): Promise<ImageAnalysisRespon
     console.error('Network error:', error);
     throw new Error('Ошибка сети при отправке изображения');
   }
+};
+
+// Сохранение анализа
+export const saveAnalysis = async (imageFile: File, analysisResult: ImageAnalysisResponse): Promise<SavedAnalysis> => {
+  const formData = new FormData();
+  formData.append('image', imageFile);
+  formData.append('analysis_result', JSON.stringify(analysisResult));
+  formData.append('ingredients_count', analysisResult.ingredients.length.toString());
+  formData.append('warnings_count', analysisResult.warnings.length.toString());
+
+  console.log('Отправка анализа:', {
+    imageName: imageFile.name,
+    imageSize: imageFile.size,
+    imageType: imageFile.type,
+    ingredientsCount: analysisResult.ingredients.length,
+    warningsCount: analysisResult.warnings.length
+  });
+
+  try {
+    const response = await authFetch(`${API_BASE_URL}/save-analysis`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        removeToken();
+      }
+      
+      let errorDetail = `Ошибка ${response.status}: ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        
+        if (Array.isArray(errorData.detail)) {
+          errorDetail = errorData.detail.map((err: any) => {
+            if (typeof err === 'string') return err;
+            if (err.msg) return err.msg;
+            if (err.loc && err.msg) return `${err.loc.join('.')}: ${err.msg}`;
+            return JSON.stringify(err);
+          }).join(', ');
+        } else if (typeof errorData.detail === 'string') {
+          errorDetail = errorData.detail;
+        } else if (errorData.message) {
+          errorDetail = errorData.message;
+        }
+      } catch (parseError) {
+        try {
+          const text = await response.text();
+          if (text) errorDetail = text;
+        } catch {
+          // Игнорируем ошибки при чтении текста
+        }
+      }
+      
+      console.error('Ошибка сохранения анализа:', errorDetail);
+      throw new Error(errorDetail);
+    }
+
+    return response.json();
+  } catch (error) {
+    console.error('Network error:', error);
+    throw new Error('Ошибка сети при сохранении анализа');
+  }
+};
+
+// Получение сохраненных анализов
+export const getSavedAnalyses = async (): Promise<SavedAnalysesResponse> => {
+  const response = await authFetch(`${API_BASE_URL}/saved-analyses`);
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      removeToken();
+    }
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Ошибка получения сохраненных анализов');
+  }
+
+  return response.json();
+};
+
+// Удаление сохраненного анализа
+export const deleteSavedAnalysis = async (analysisId: number): Promise<{ message: string }> => {
+  const response = await authFetch(`${API_BASE_URL}/saved-analyses/${analysisId}`, {
+    method: 'DELETE',
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      removeToken();
+    }
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Ошибка удаления анализа');
+  }
+
+  return response.json();
+};
+
+// Перепроверка анализа с текущими медицинскими данными
+export const reanalyzeSavedAnalysis = async (analysisId: number): Promise<SavedAnalysis> => {
+  const response = await authFetch(`${API_BASE_URL}/reanalyze-analysis/${analysisId}`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      removeToken();
+    }
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Ошибка перепроверки анализа');
+  }
+
+  return response.json();
 };

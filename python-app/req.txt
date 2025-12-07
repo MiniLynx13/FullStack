@@ -5,4 +5,6 @@ pandas
 tqdm
 python-multipart
 Pillow
+aiofiles
+minio
 requests

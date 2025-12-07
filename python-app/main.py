@@ -1,5 +1,5 @@
 import uvicorn
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
@@ -7,7 +7,7 @@ import sqlite3
 import hashlib
 import secrets
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import base64
 from PIL import Image
 import ollama
@@ -15,6 +15,9 @@ import json
 import traceback
 import re
 import io
+from minio import Minio
+from minio.error import S3Error
+import uuid
 
 app = FastAPI()
 
@@ -33,6 +36,29 @@ app.add_middleware(
 
 # Security
 security = HTTPBearer()
+
+# Настройки Minio
+MINIO_ENDPOINT = "localhost:9000"
+MINIO_ACCESS_KEY = "grant_access"
+MINIO_SECRET_KEY = "ai_food_analysing"
+MINIO_BUCKET_NAME = "ingredients"
+
+# Инициализация клиента Minio
+minio_client = Minio(
+    MINIO_ENDPOINT,
+    access_key=MINIO_ACCESS_KEY,
+    secret_key=MINIO_SECRET_KEY,
+    secure=False
+)
+
+# Создание bucket если не существует
+def create_bucket_if_not_exists():
+    try:
+        if not minio_client.bucket_exists(MINIO_BUCKET_NAME):
+            minio_client.make_bucket(MINIO_BUCKET_NAME)
+            print(f"Bucket '{MINIO_BUCKET_NAME}' создан")
+    except Exception as e:
+        print(f"Ошибка при создании bucket: {e}")
 
 # Подключение к SQLite базе данных
 def get_db_connection():
@@ -74,6 +100,23 @@ class MedicalDataResponse(BaseModel):
     allergens: Optional[str] = None
     updated_at: str
 
+class SaveAnalysisRequest(BaseModel):
+    analysis_result: Dict[str, Any]
+    ingredients_count: int
+    warnings_count: int
+
+class SavedAnalysis(BaseModel):
+    id: int
+    user_id: int
+    image_path: str
+    analysis_result: Dict[str, Any]
+    created_at: str
+    ingredients_count: int
+    warnings_count: int
+    ref_count: int = 1
+    original_analysis_id: Optional[int] = None
+    is_reanalysis: Optional[bool] = False
+
 # Инициализация базы данных
 def init_db():
     conn = get_db_connection()
@@ -112,6 +155,24 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
         )
     ''')
+    
+    # Создание таблицы сохраненных анализов
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS saved_analyses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER REFERENCES users(id),
+            image_path TEXT NOT NULL,
+            analysis_result TEXT NOT NULL,
+            ingredients_count INTEGER DEFAULT 0,
+            warnings_count INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            ref_count INTEGER DEFAULT 1,
+            original_analysis_id INTEGER DEFAULT NULL,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    ''')
+
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_original_analysis ON saved_analyses(original_analysis_id)')
     
     conn.commit()
     conn.close()
@@ -164,6 +225,7 @@ def get_user_by_token(token: str):
 @app.on_event("startup")
 async def startup_event():
     init_db()
+    create_bucket_if_not_exists()
     # Очищаем просроченные токены при запуске приложения
     cleaned_count = cleanup_expired_tokens()
     print(f"При запуске удалено {cleaned_count} просроченных токенов")
@@ -587,6 +649,416 @@ async def analyze_image(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Ошибка при обработке изображения: {str(e)}"
         )
+
+# Сохранение анализа изображения
+@app.post("/save-analysis")
+async def save_analysis(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    image: UploadFile = File(...),
+    analysis_result: str = Form(...),
+    ingredients_count: str = Form(...),
+    warnings_count: str = Form(...)
+):
+    user = get_user_by_token(credentials.credentials)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный или просроченный токен"
+        )
+    
+    try:
+        # Парсим analysis_result из JSON строки
+        analysis_result_dict = json.loads(analysis_result)
+        
+        # Проверяем файл
+        if not image:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Файл не предоставлен"
+            )
+        
+        # Читаем данные изображения
+        image_data = await image.read()
+        
+        if len(image_data) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Файл пустой"
+            )
+        
+        # Генерируем уникальное имя для файла
+        file_extension = image.filename.split('.')[-1] if '.' in image.filename else 'jpg'
+        unique_filename = f"{user['id']}_{uuid.uuid4().hex}.{file_extension}"
+        minio_path = f"user_{user['id']}/{unique_filename}"
+        
+        # Сохраняем изображение в Minio
+        try:
+            minio_client.put_object(
+                MINIO_BUCKET_NAME,
+                minio_path,
+                io.BytesIO(image_data),
+                length=len(image_data),
+                content_type=image.content_type
+            )
+        except S3Error as e:
+            print(f"Ошибка Minio: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Ошибка при сохранении изображения"
+            )
+        
+        # Сохраняем запись в базу данных
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        cur.execute('''
+            INSERT INTO saved_analyses 
+            (user_id, image_path, analysis_result, ingredients_count, warnings_count)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (
+            user['id'],
+            minio_path,
+            json.dumps(analysis_result_dict),
+            int(ingredients_count),
+            int(warnings_count)
+        ))
+        
+        analysis_id = cur.lastrowid
+        conn.commit()
+        
+        # Получаем сохраненную запись
+        cur.execute('''
+            SELECT id, user_id, image_path, analysis_result, 
+                   ingredients_count, warnings_count, created_at
+            FROM saved_analyses 
+            WHERE id = ?
+        ''', (analysis_id,))
+        
+        saved_analysis = cur.fetchone()
+        conn.close()
+        
+        # Генерируем временную ссылку на изображение
+        image_url = minio_client.presigned_get_object(
+            MINIO_BUCKET_NAME,
+            minio_path,
+            expires=timedelta(hours=1)
+        )
+        
+        return {
+            "id": saved_analysis['id'],
+            "user_id": saved_analysis['user_id'],
+            "image_url": image_url,
+            "analysis_result": json.loads(saved_analysis['analysis_result']),
+            "ingredients_count": saved_analysis['ingredients_count'],
+            "warnings_count": saved_analysis['warnings_count'],
+            "created_at": saved_analysis['created_at']
+        }
+        
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Некорректный формат JSON в analysis_result: {str(e)}"
+        )
+    except Exception as e:
+        print(f"Ошибка при сохранении анализа: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка при сохранении анализа: {str(e)}"
+        )
+
+# Получение сохраненных анализов пользователя
+@app.get("/saved-analyses")
+async def get_saved_analyses(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    user = get_user_by_token(credentials.credentials)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный или просроченный токен"
+        )
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    cur.execute('''
+        SELECT id, user_id, image_path, analysis_result, 
+               ingredients_count, warnings_count, created_at
+        FROM saved_analyses 
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+    ''', (user['id'],))
+    
+    saved_analyses = cur.fetchall()
+    conn.close()
+    
+    results = []
+    for analysis in saved_analyses:
+        # Генерируем временную ссылку на изображение
+        try:
+            image_url = minio_client.presigned_get_object(
+                MINIO_BUCKET_NAME,
+                analysis['image_path'],
+                expires=timedelta(hours=1)
+            )
+        except Exception as e:
+            print(f"Ошибка при генерации ссылки: {e}")
+            image_url = None
+        
+        results.append({
+            "id": analysis['id'],
+            "user_id": analysis['user_id'],
+            "image_url": image_url,
+            "analysis_result": json.loads(analysis['analysis_result']),
+            "ingredients_count": analysis['ingredients_count'],
+            "warnings_count": analysis['warnings_count'],
+            "created_at": analysis['created_at']
+        })
+    
+    return {"analyses": results}
+
+# Эндпоинт для пересмотра анализа с медицинскими данными
+@app.post("/reanalyze-analysis/{analysis_id}")
+async def reanalyze_saved_analysis(
+    analysis_id: int,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    user = get_user_by_token(credentials.credentials)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный или просроченный токен"
+        )
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Получаем сохраненный анализ
+    cur.execute('''
+        SELECT id, user_id, image_path, analysis_result, 
+               ingredients_count, warnings_count, created_at,
+               original_analysis_id, ref_count
+        FROM saved_analyses 
+        WHERE id = ? AND user_id = ?
+    ''', (analysis_id, user['id']))
+    
+    original_analysis = cur.fetchone()
+    
+    if not original_analysis:
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Анализ не найден"
+        )
+    
+    # Получаем текущие медицинские данные пользователя
+    cur.execute(
+        'SELECT contraindications, allergens FROM user_medical_data WHERE user_id = ?',
+        (user['id'],)
+    )
+    medical_data = cur.fetchone()
+    
+    # Парсим старый результат анализа
+    try:
+        old_result = json.loads(original_analysis['analysis_result'])
+    except json.JSONDecodeError:
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Некорректный формат данных анализа"
+        )
+    
+    # Извлекаем аллергены и противопоказания из медицинских данных
+    allergens = []
+    contraindications = []
+    
+    if medical_data:
+        if medical_data['allergens']:
+            allergens = [a.strip().lower() for a in re.split(r'[,;.\s\n]+', medical_data['allergens']) if a.strip()]
+        if medical_data['contraindications']:
+            contraindications = [c.strip().lower() for c in re.split(r'[,;.\s\n]+', medical_data['contraindications']) if c.strip()]
+    
+    # Анализируем ингредиенты заново с новыми медицинскими данными
+    new_ingredients = []
+    new_warnings = []
+    new_warnings_count = 0
+    
+    for ingredient_data in old_result.get('ingredients', []):
+        ingredient_name = ingredient_data.get('name', '')
+        ingredient_lower = ingredient_name.lower()
+        
+        is_allergen = False
+        is_contraindication = False
+        
+        # Проверяем на аллергены
+        for allergen in allergens:
+            if allergen and allergen in ingredient_lower:
+                is_allergen = True
+                break
+        
+        # Проверяем на противопоказания
+        for contra in contraindications:
+            if contra and contra in ingredient_lower:
+                is_contraindication = True
+                break
+        
+        new_ingredients.append({
+            'name': ingredient_name,
+            'is_allergen': is_allergen,
+            'is_contraindication': is_contraindication
+        })
+        
+        if is_allergen:
+            new_warnings.append(f"Аллерген обнаружен: {ingredient_name}")
+            new_warnings_count += 1
+        if is_contraindication:
+            new_warnings.append(f"Противопоказание: {ingredient_name}")
+            new_warnings_count += 1
+    
+    # Создаем новый результат анализа
+    new_result = {
+        "ingredients": new_ingredients,
+        "warnings": new_warnings,
+        "original_response": old_result.get('original_response', 'Перепроверено с обновленными медицинскими данными')
+    }
+    
+    # Определяем ID оригинального анализа (если это уже копия, ссылаемся на оригинал)
+    original_analysis_id = original_analysis['original_analysis_id'] or original_analysis['id']
+    
+    # Создаем новую копию анализа
+    cur.execute('''
+        INSERT INTO saved_analyses 
+        (user_id, image_path, analysis_result, ingredients_count, 
+         warnings_count, original_analysis_id, ref_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        user['id'],
+        original_analysis['image_path'],
+        json.dumps(new_result),
+        original_analysis['ingredients_count'],
+        new_warnings_count,
+        original_analysis_id,
+        1  # Начальное значение счетчика ссылок для копии
+    ))
+    
+    new_analysis_id = cur.lastrowid
+    
+    # Увеличиваем счетчик ссылок для оригинального анализа или его копий
+    cur.execute('''
+        UPDATE saved_analyses 
+        SET ref_count = ref_count + 1 
+        WHERE id = ? OR original_analysis_id = ?
+    ''', (original_analysis_id, original_analysis_id))
+    
+    conn.commit()
+    
+    # Получаем созданный анализ
+    cur.execute('''
+        SELECT id, user_id, image_path, analysis_result, 
+               ingredients_count, warnings_count, created_at,
+               original_analysis_id, ref_count
+        FROM saved_analyses 
+        WHERE id = ?
+    ''', (new_analysis_id,))
+    
+    new_analysis = cur.fetchone()
+    
+    # Генерируем временную ссылку на изображение
+    try:
+        image_url = minio_client.presigned_get_object(
+            MINIO_BUCKET_NAME,
+            new_analysis['image_path'],
+            expires=timedelta(hours=1)
+        )
+    except Exception as e:
+        print(f"Ошибка при генерации ссылки: {e}")
+        image_url = None
+    
+    result = {
+        "id": new_analysis['id'],
+        "user_id": new_analysis['user_id'],
+        "image_url": image_url,
+        "analysis_result": json.loads(new_analysis['analysis_result']),
+        "ingredients_count": new_analysis['ingredients_count'],
+        "warnings_count": new_analysis['warnings_count'],
+        "created_at": new_analysis['created_at'],
+        "original_analysis_id": new_analysis['original_analysis_id'],
+        "is_reanalysis": True,
+        "message": "Анализ успешно перепроверен с обновленными медицинскими данными"
+    }
+    
+    conn.close()
+    return result
+
+# Эндпоинт для удаления анализа
+@app.delete("/saved-analyses/{analysis_id}")
+async def delete_saved_analysis(
+    analysis_id: int,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    user = get_user_by_token(credentials.credentials)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный или просроченный токен"
+        )
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Получаем анализ с путем к изображению и информацией о ссылках
+    cur.execute('''
+        SELECT id, user_id, image_path, original_analysis_id, ref_count 
+        FROM saved_analyses 
+        WHERE id = ? AND user_id = ?
+    ''', (analysis_id, user['id']))
+    
+    analysis = cur.fetchone()
+    
+    if not analysis:
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Анализ не найден"
+        )
+    
+    # Определяем ID оригинального анализа
+    original_analysis_id = analysis['original_analysis_id'] or analysis['id']
+    
+    # Удаляем текущий анализ
+    cur.execute('DELETE FROM saved_analyses WHERE id = ?', (analysis_id,))
+    
+    # Уменьшаем счетчик ссылок для связанных анализов
+    cur.execute('''
+        UPDATE saved_analyses 
+        SET ref_count = ref_count - 1 
+        WHERE (id = ? OR original_analysis_id = ?) AND ref_count > 0
+    ''', (original_analysis_id, original_analysis_id))
+    
+    # Проверяем, остались ли другие анализы, ссылающиеся на это изображение
+    cur.execute('''
+        SELECT COUNT(*) as count FROM saved_analyses 
+        WHERE image_path = ? AND id != ?
+    ''', (analysis['image_path'], analysis_id))
+    
+    remaining_count = cur.fetchone()['count']
+    
+    # Если это последняя копия, удаляем изображение из Minio
+    if remaining_count == 0:
+        try:
+            minio_client.remove_object(MINIO_BUCKET_NAME, analysis['image_path'])
+            print(f"Изображение удалено из Minio: {analysis['image_path']}")
+        except Exception as e:
+            print(f"Ошибка при удалении изображения из Minio: {e}")
+            # Продолжаем даже если не удалось удалить изображение
+    
+    conn.commit()
+    conn.close()
+    
+    return {"message": "Анализ успешно удален"}
 
 @app.get("/")
 async def root():
