@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import '../App.css';
-import logo from '../logo.svg';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Container, Box, Heading, Text, Button, Grid, GridItem, Textarea, createToaster } from '@chakra-ui/react';
 import { useAuth } from '../hooks/useAuth';
 import { getMedicalData, saveMedicalData, MedicalData } from '../services/apiService';
 import { useNavigate } from 'react-router-dom';
 
 function User() {
-  const { user, logout, isAuth, error: authError, clearError } = useAuth();
+  const { user, logout, isAuth } = useAuth();
   const navigate = useNavigate();
+  const toaster = createToaster();
   
   const [medicalData, setMedicalData] = useState<MedicalData>({
     contraindications: '',
@@ -17,26 +17,12 @@ function User() {
     contraindications: '',
     allergens: ''
   });
-  const [loading, setLoading] = useState(false);
-  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [initialLoad, setInitialLoad] = useState(false);
 
-  // Редирект если пользователь не авторизован
-  useEffect(() => {
-    if (!isAuth) {
-      navigate('/authorisation');
-    }
-  }, [isAuth, navigate]);
-
-  // Загрузка медицинских данных при монтировании компонента
-  useEffect(() => {
-    if (isAuth) {
-      loadMedicalData();
-    }
-  }, [isAuth]);
-
-  const loadMedicalData = async () => {
+  // Загрузка медицинских данных (только один раз при загрузке)
+  const loadMedicalData = useCallback(async () => {
     try {
-      setLoading(true);
       const data = await getMedicalData();
       setMedicalData({
         contraindications: data.contraindications || '',
@@ -48,10 +34,24 @@ function User() {
       });
     } catch (error) {
       console.error('Error loading medical data:', error);
-    } finally {
-      setLoading(false);
+      toaster.create({
+        title: 'Ошибка',
+        description: 'Не удалось загрузить медицинские данные',
+        status: 'error',
+        duration: 3000,
+      });
     }
-  };
+  }, [toaster]);
+
+  // Редирект если пользователь не авторизован и загрузка данных при первом рендере
+  useEffect(() => {
+    if (!isAuth) {
+      navigate('/authorisation');
+    } else if (!initialLoad) {
+      loadMedicalData();
+      setInitialLoad(true);
+    }
+  }, [isAuth, navigate, loadMedicalData, initialLoad]);
 
   const handleLogout = async () => {
     try {
@@ -59,6 +59,12 @@ function User() {
       navigate('/authorisation');
     } catch (error) {
       console.error('Error logging out:', error);
+      toaster.create({
+        title: 'Ошибка',
+        description: 'Не удалось выйти из системы',
+        status: 'error',
+        duration: 3000,
+      });
     }
   };
 
@@ -67,25 +73,30 @@ function User() {
       ...medicalData,
       [e.target.name]: e.target.value
     });
-    if (saveMessage) setSaveMessage(null);
   };
 
   const handleSaveMedical = async () => {
     try {
-      setLoading(true);
-      setSaveMessage(null);
+      setSaveLoading(true);
       await saveMedicalData(medicalData);
       setSavedData(medicalData);
-      setSaveMessage('Медицинские данные успешно сохранены!');
       
-      setTimeout(() => {
-        setSaveMessage(null);
-      }, 3000);
+      toaster.create({
+        title: 'Успешно',
+        description: 'Медицинские данные сохранены',
+        status: 'success',
+        duration: 3000,
+      });
     } catch (error) {
       console.error('Error saving medical data:', error);
-      setSaveMessage('Ошибка сохранения медицинских данных');
+      toaster.create({
+        title: 'Ошибка',
+        description: 'Не удалось сохранить медицинские данные',
+        status: 'error',
+        duration: 3000,
+      });
     } finally {
-      setLoading(false);
+      setSaveLoading(false);
     }
   };
 
@@ -96,144 +107,207 @@ function User() {
   // Показываем заглушку во время редиректа или если не авторизован
   if (!isAuth) {
     return (
-      <div className="App">
-        <header className="App-header">
-          <img src={logo} className="App-logo" alt="logo" />
-          <p>Перенаправление на страницу авторизации...</p>
-        </header>
-      </div>
+      <Container 
+        maxW="1200px" 
+        py={8} 
+        bg="transparent" 
+        display="flex" 
+        alignItems="center" 
+        justifyContent="center" 
+        minH="calc(100vh - 200px)"
+      >
+        <Box textAlign="center">
+          <Heading as="h1" size="xl" color="blue.900" mb={4}>
+            Перенаправление на страницу авторизации...
+          </Heading>
+        </Box>
+      </Container>
     );
   }
 
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        
-        <div style={{ textAlign: 'left', maxWidth: '500px', margin: '0 auto' }}>
-          <h3>Личный кабинет</h3>
-          
-          {authError && (
-            <div style={{ 
-              color: 'red', 
-              marginBottom: '15px', 
-              padding: '10px',
-              backgroundColor: 'rgba(255, 0, 0, 0.1)',
-              borderRadius: '4px',
-              border: '1px solid red'
-            }}>
-              {authError}
-              <button 
-                onClick={clearError}
-                style={{
-                  marginLeft: '10px',
-                  background: 'none',
-                  border: 'none',
-                  color: 'red',
-                  cursor: 'pointer'
+    <Container 
+      maxW="1200px" 
+      p={0} 
+      bg="transparent"
+      display="flex"
+      alignItems="center"
+      justifyContent="center"
+      minH="calc(100vh - 200px)"
+    >
+      <Box
+        width="100%"
+        py={8}
+        px={6}
+        borderRadius="xl"
+        bg="#eff6ffe0"
+        boxShadow="lg"
+      >
+        <Grid templateColumns={{ base: "1fr", md: "1fr 1fr" }} gap={8}>
+          {/* Левая часть: Информация о пользователе */}
+          <GridItem>
+            <Box 
+              py={8}
+              px={6}
+              borderRadius="xl"
+              bg="#eff6ff50"
+              height="100%"
+              display="flex"
+              flexDirection="column"
+            >
+              <Heading as="h1" size="xl" color="blue.900" mb={6} textAlign="left">
+                Личный кабинет
+              </Heading>
+              
+              <Box mb={6}>
+                <Heading as="h3" size="md" color="blue.900" mb={3}>
+                  Информация о пользователе
+                </Heading>
+                <Box 
+                  p={0}
+                  bg="transparent"
+                >
+                  <Text mb={2} color="blue.800">
+                    <Text as="span" fontWeight="bold">Имя пользователя:</Text> {user?.username}
+                  </Text>
+                  <Text mb={2} color="blue.800">
+                    <Text as="span" fontWeight="bold">Email:</Text> {user?.email}
+                  </Text>
+                  <Text color="blue.800">
+                    <Text as="span" fontWeight="bold">Дата регистрации:</Text>{' '}
+                    {user?.created_at ? new Date(user.created_at).toLocaleDateString('ru-RU') : 'Неизвестно'}
+                  </Text>
+                </Box>
+              </Box>
+              
+              {/* Добавим пустое пространство для выравнивания кнопки */}
+              <Box flex="1"></Box>
+              
+              <Button
+                onClick={handleLogout}
+                colorScheme="blue"
+                size="lg"
+                bg="blue.50"
+                color="blue.800"
+                border="2px solid"
+                borderColor="blue.700"
+                _hover={{ 
+                  bg: 'blue.100',
+                  borderColor: 'blue.800' 
+                }}
+                _active={{ 
+                  bg: 'blue.200',
+                  borderColor: 'blue.900' 
                 }}
               >
-                ×
-              </button>
-            </div>
-          )}
+                Выйти
+              </Button>
+            </Box>
+          </GridItem>
 
-          {saveMessage && (
-            <div style={{ 
-              color: saveMessage.includes('Ошибка') ? 'red' : 'green',
-              marginBottom: '15px', 
-              padding: '10px',
-              backgroundColor: saveMessage.includes('Ошибка') ? 'rgba(255, 0, 0, 0.1)' : 'rgba(0, 255, 0, 0.1)',
-              borderRadius: '4px',
-              border: saveMessage.includes('Ошибка') ? '1px solid red' : '1px solid green'
-            }}>
-              {saveMessage}
-            </div>
-          )}
-          
-          <div style={{ marginBottom: '20px', padding: '20px', border: '1px solid #61dafb', borderRadius: '8px' }}>
-            <h4>Информация о пользователе</h4>
-            <p><strong>Имя пользователя:</strong> {user?.username}</p>
-            <p><strong>Email:</strong> {user?.email}</p>
-            <p><strong>Дата регистрации:</strong> {user?.created_at ? new Date(user.created_at).toLocaleDateString('ru-RU') : 'Неизвестно'}</p>
-          </div>
-
-          <div style={{ marginBottom: '20px', padding: '20px', border: '1px solid #61dafb', borderRadius: '8px' }}>
-            <h4>Медицинские противопоказания</h4>
-            <textarea
-              name="contraindications"
-              placeholder="Укажите ваши медицинские противопоказания (на английском): Fish, milk..."
-              value={medicalData.contraindications}
-              onChange={handleMedicalChange}
-              rows={4}
-              style={{
-                width: '100%',
-                padding: '10px',
-                fontSize: '14px',
-                border: '1px solid #ccc',
-                borderRadius: '4px',
-                boxSizing: 'border-box',
-                marginBottom: '10px'
-              }}
-            />
-          </div>
-
-          <div style={{ marginBottom: '20px', padding: '20px', border: '1px solid #61dafb', borderRadius: '8px' }}>
-            <h4>Аллергены</h4>
-            <textarea
-              name="allergens"
-              placeholder="Укажите ваши аллергены (на английском): Fish, milk..."
-              value={medicalData.allergens}
-              onChange={handleMedicalChange}
-              rows={4}
-              style={{
-                width: '100%',
-                padding: '10px',
-                fontSize: '14px',
-                border: '1px solid #ccc',
-                borderRadius: '4px',
-                boxSizing: 'border-box',
-                marginBottom: '10px'
-              }}
-            />
-            <button
-              onClick={handleSaveMedical}
-              disabled={loading || !hasChanges}
-              style={{
-                padding: '10px 20px',
-                backgroundColor: hasChanges ? '#61dafb' : '#ccc',
-                color: '#282c34',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: hasChanges && !loading ? 'pointer' : 'not-allowed',
-                opacity: loading ? 0.7 : 1
-              }}
+          {/* Правая часть: Медицинские данные */}
+          <GridItem>
+            <Box 
+              py={8}
+              px={6}
+              borderRadius="xl"
+              bg="#eff6ff50"
+              height="100%"
+              display="flex"
+              flexDirection="column"
             >
-              {loading ? 'Сохранение...' : 'Сохранить медицинские данные'}
-            </button>
-            {!hasChanges && (
-              <p style={{ color: '#61dafb', fontSize: '14px', marginTop: '10px' }}>
-                Все изменения сохранены
-              </p>
-            )}
-          </div>
-
-          <button
-            onClick={handleLogout}
-            style={{
-              padding: '10px 20px',
-              backgroundColor: '#ff4444',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer'
-            }}
-          >
-            Выйти
-          </button>
-        </div>
-      </header>
-    </div>
+              <Heading as="h2" size="lg" color="blue.900" mb={6} textAlign="left">
+                Медицинские данные
+              </Heading>
+              
+              <Box mb={6}>
+                <Heading as="h4" size="md" color="blue.900" mb={3}>
+                  Противопоказания
+                </Heading>
+                <Text mb={2} fontSize="sm" color="blue.800">
+                  Укажите ваши медицинские противопоказания (на английском):
+                </Text>
+                <Textarea
+                  name="contraindications"
+                  placeholder="Пример: diabetes, hypertension, kidney problems..."
+                  value={medicalData.contraindications}
+                  onChange={handleMedicalChange}
+                  size="lg"
+                  minH="120px"
+                  borderColor="blue.300"
+                  color="blue.800"
+                  _hover={{ borderColor: 'blue.400' }}
+                  _focus={{ 
+                    borderColor: 'blue.500', 
+                    boxShadow: '0 0 0 1px var(--chakra-colors-blue-500)' 
+                  }}
+                  resize="vertical"
+                />
+              </Box>
+              
+              <Box mb={8}>
+                <Heading as="h4" size="md" color="blue.900" mb={3}>
+                  Аллергены
+                </Heading>
+                <Text mb={2} fontSize="sm" color="blue.800">
+                  Укажите ваши аллергены (на английском):
+                </Text>
+                <Textarea
+                  name="allergens"
+                  placeholder="Пример: peanuts, shellfish, milk, eggs..."
+                  value={medicalData.allergens}
+                  onChange={handleMedicalChange}
+                  size="lg"
+                  minH="120px"
+                  borderColor="blue.300"
+                  color="blue.800"
+                  _hover={{ borderColor: 'blue.400' }}
+                  _focus={{ 
+                    borderColor: 'blue.500', 
+                    boxShadow: '0 0 0 1px var(--chakra-colors-blue-500)' 
+                  }}
+                  resize="vertical"
+                />
+              </Box>
+              
+              {/* Пустое пространство для выравнивания */}
+              <Box flex="1"></Box>
+              
+              <Button
+                onClick={handleSaveMedical}
+                colorScheme="blue"
+                size="lg"
+                bg="blue.50"
+                color="blue.800"
+                border="2px solid"
+                borderColor="blue.700"
+                _hover={{ 
+                  bg: 'blue.100',
+                  borderColor: 'blue.800' 
+                }}
+                _active={{ 
+                  bg: 'blue.200',
+                  borderColor: 'blue.900' 
+                }}
+                disabled={!hasChanges}
+                loading={saveLoading}
+                loadingText="Сохранение..."
+                width="full"
+                mb={2}
+              >
+                Сохранить медицинские данные
+              </Button>
+              
+              {!hasChanges && !saveLoading && (
+                <Text mt={3} color="green.700" fontSize="sm" textAlign="center">
+                  Все изменения сохранены
+                </Text>
+              )}
+            </Box>
+          </GridItem>
+        </Grid>
+      </Box>
+    </Container>
   );
 }
 

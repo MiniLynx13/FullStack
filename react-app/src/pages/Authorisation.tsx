@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import '../App.css';
-import logo from '../logo.svg';
+import React, { useState, useEffect, useRef } from 'react';
+import { Box, Container, Heading, Input, Button, Text, CloseButton } from '@chakra-ui/react';
 import { useAuth } from '../hooks/useAuth';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 function Authorisation() {
   const { login, register, loading: authLoading, error: authError, clearError, isAuth } = useAuth();
   const navigate = useNavigate();
+  const { search, pathname } = useLocation();
+  const searchParams = new URLSearchParams(search);
   
   const [isLogin, setIsLogin] = useState(true);
   const [formData, setFormData] = useState({
@@ -16,6 +17,10 @@ function Authorisation() {
     confirmPassword: ''
   });
   const [localError, setLocalError] = useState<string | null>(null);
+  const [showAuthError, setShowAuthError] = useState<string | null>(null);
+  
+  // Сохраняем предыдущий путь для обнаружения смены страницы
+  const prevPathnameRef = useRef(pathname);
 
   // Редирект если пользователь уже авторизован
   useEffect(() => {
@@ -24,17 +29,43 @@ function Authorisation() {
     }
   }, [isAuth, navigate]);
 
-  // Очищаем ошибки при смене режима формы
+  // Синхронизация ошибки бэкенда с локальным состоянием
   useEffect(() => {
-    clearError();
+    if (authError) {
+      setShowAuthError(authError);
+    }
+  }, [authError]);
+
+  // Очистка ошибок при смене страницы
+  useEffect(() => {
+    if (pathname !== prevPathnameRef.current) {
+      setShowAuthError(null);
+      setLocalError(null);
+      clearError();
+      prevPathnameRef.current = pathname;
+    }
+  }, [pathname, clearError]);
+
+  // Очистка только локальных ошибок при смене режима формы
+  useEffect(() => {
     setLocalError(null);
   }, [isLogin]);
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'register') {
+      setIsLogin(false);
+    } else {
+      setIsLogin(true);
+    }
+  }, [search, searchParams]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value
     });
+    // Сбрасываем только локальные ошибки при изменении полей
     if (localError) {
       setLocalError(null);
     }
@@ -77,14 +108,13 @@ function Authorisation() {
           password: formData.password
         });
       }
-      // После успешной авторизации/регистрации редирект произойдет автоматически из-за useEffect
     } catch (err) {
       console.error('Auth error in component:', err);
     }
   };
 
-  const switchMode = () => {
-    setIsLogin(!isLogin);
+  const handleSwitchToLogin = () => {
+    setIsLogin(true);
     setFormData({
       username: '',
       email: '',
@@ -92,216 +122,313 @@ function Authorisation() {
       confirmPassword: ''
     });
     setLocalError(null);
+    // Не сбрасываем ошибку бэкенда при переключении между формами
+    navigate('/authorisation');
+  };
+
+  const handleSwitchToRegister = () => {
+    setIsLogin(false);
+    setFormData({
+      username: '',
+      email: '',
+      password: '',
+      confirmPassword: ''
+    });
+    setLocalError(null);
+    // Не сбрасываем ошибку бэкенда при переключении между формами
+    navigate('/authorisation?tab=register');
+  };
+
+  const handleClearAuthError = () => {
+    setShowAuthError(null);
     clearError();
   };
 
   // Показываем заглушку во время редиректа или если уже авторизован
   if (isAuth) {
     return (
-      <div className="App">
-        <header className="App-header">
-          <img src={logo} className="App-logo" alt="logo" />
-          <p>Перенаправление в личный кабинет...</p>
-        </header>
-      </div>
+      <Container maxW="1200px" py={8} bg="transparent" display="flex" alignItems="center" justifyContent="center" minH="calc(100vh - 200px)">
+        <Box textAlign="center">
+          <Heading as="h1" size="xl" color="blue.900" mb={4}>
+            Перенаправление в личный кабинет...
+          </Heading>
+        </Box>
+      </Container>
     );
   }
 
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <h3>{isLogin ? 'Вход' : 'Регистрация'}</h3>
-        
-        <div style={{ maxWidth: '400px', margin: '0 auto' }}>
-          <div style={{ marginBottom: '20px' }}>
-            <button 
-              onClick={() => setIsLogin(true)}
-              style={{
-                marginRight: '10px',
-                backgroundColor: isLogin ? '#61dafb' : 'transparent',
-                color: isLogin ? '#282c34' : '#61dafb',
-                border: '1px solid #61dafb',
-                padding: '10px 20px',
-                cursor: 'pointer',
-                borderRadius: '4px'
-              }}
+    <Container 
+      maxW="1200px" 
+      p={0} 
+      bg="transparent"
+      display="flex"
+      alignItems="center"
+      justifyContent="center"
+      minH="calc(100vh - 200px)"
+    >
+      <Box
+        width="100%"
+        maxW="500px"
+        py={8}
+        px={6}
+        borderRadius="xl"
+        bg="#eff6ffe0"
+        boxShadow="lg"
+      >
+        <Box display="flex" flexDirection="column" gap={6} width="100%">
+          <Box textAlign="center">
+            <Heading as="h1" size="xl" color="blue.900" mb={2}>
+              {isLogin ? 'Вход' : 'Регистрация'}
+            </Heading>
+            <Text color="blue.700" fontSize="lg">
+              {isLogin ? 'Войдите в свой аккаунт' : 'Создайте новый аккаунт'}
+            </Text>
+          </Box>
+
+          {/* Переключение между входом и регистрацией */}
+          <Box display="flex" gap={2} justifyContent="center" mb={4}>
+            <Button
+              onClick={handleSwitchToLogin}
+              variant={isLogin ? 'solid' : 'outline'}
+              colorScheme="blue"
+              size="md"
+              flex={1}
+              type="button"
             >
               Вход
-            </button>
-            <button 
-              onClick={() => setIsLogin(false)}
-              style={{
-                backgroundColor: !isLogin ? '#61dafb' : 'transparent',
-                color: !isLogin ? '#282c34' : '#61dafb',
-                border: '1px solid #61dafb',
-                padding: '10px 20px',
-                cursor: 'pointer',
-                borderRadius: '4px'
-              }}
+            </Button>
+            <Button
+              onClick={handleSwitchToRegister}
+              variant={!isLogin ? 'solid' : 'outline'}
+              colorScheme="blue"
+              size="md"
+              flex={1}
+              type="button"
             >
               Регистрация
-            </button>
-          </div>
+            </Button>
+          </Box>
 
+          {/* Форма */}
           <form onSubmit={handleSubmit}>
-            <div style={{ marginBottom: '15px' }}>
-              <input
-                type="text"
-                name="username"
-                placeholder="Имя пользователя"
-                value={formData.username}
-                onChange={handleChange}
-                required
-                style={{
-                  width: '100%',
-                  padding: '10px',
-                  fontSize: '16px',
-                  border: (localError || authError) ? '1px solid red' : '1px solid #ccc',
-                  borderRadius: '4px',
-                  boxSizing: 'border-box'
-                }}
-              />
-            </div>
-
-            {!isLogin && (
-              <div style={{ marginBottom: '15px' }}>
-                <input
-                  type="email"
-                  name="email"
-                  placeholder="Email"
-                  value={formData.email}
+            <Box display="flex" flexDirection="column" gap={4} width="100%">
+              {/* Имя пользователя */}
+              <Box>
+                <Text as="label" display="block" mb={2} color="blue.800" fontWeight="medium">
+                  Имя пользователя
+                </Text>
+                <Input
+                  type="text"
+                  name="username"
+                  placeholder="Введите имя пользователя"
+                  value={formData.username}
                   onChange={handleChange}
+                  size="lg"
+                  borderColor="blue.300"
+                  _hover={{ borderColor: 'blue.400' }}
+                  _focus={{ borderColor: 'blue.500', boxShadow: '0 0 0 1px var(--chakra-colors-blue-500)' }}
                   required
-                  style={{
-                    width: '100%',
-                    padding: '10px',
-                    fontSize: '16px',
-                    border: (localError || authError) ? '1px solid red' : '1px solid #ccc',
-                    borderRadius: '4px',
-                    boxSizing: 'border-box'
-                  }}
                 />
-              </div>
-            )}
+              </Box>
 
-            <div style={{ marginBottom: '15px' }}>
-              <input
-                type="password"
-                name="password"
-                placeholder="Пароль"
-                value={formData.password}
-                onChange={handleChange}
-                required
-                style={{
-                  width: '100%',
-                  padding: '10px',
-                  fontSize: '16px',
-                  border: (localError || authError) ? '1px solid red' : '1px solid #ccc',
-                  borderRadius: '4px',
-                  boxSizing: 'border-box'
-                }}
-              />
-            </div>
+              {/* Email (только для регистрации) */}
+              {!isLogin && (
+                <Box>
+                  <Text as="label" display="block" mb={2} color="blue.800" fontWeight="medium">
+                    Email
+                  </Text>
+                  <Input
+                    type="email"
+                    name="email"
+                    placeholder="Введите email"
+                    value={formData.email}
+                    onChange={handleChange}
+                    size="lg"
+                    borderColor="blue.300"
+                    _hover={{ borderColor: 'blue.400' }}
+                    _focus={{ borderColor: 'blue.500', boxShadow: '0 0 0 1px var(--chakra-colors-blue-500)' }}
+                    required
+                  />
+                </Box>
+              )}
 
-            {!isLogin && (
-              <div style={{ marginBottom: '15px' }}>
-                <input
+              {/* Пароль */}
+              <Box>
+                <Text as="label" display="block" mb={2} color="blue.800" fontWeight="medium">
+                  Пароль
+                </Text>
+                <Input
                   type="password"
-                  name="confirmPassword"
-                  placeholder="Подтвердите пароль"
-                  value={formData.confirmPassword}
+                  name="password"
+                  placeholder="Введите пароль"
+                  value={formData.password}
                   onChange={handleChange}
+                  size="lg"
+                  borderColor="blue.300"
+                  _hover={{ borderColor: 'blue.400' }}
+                  _focus={{ borderColor: 'blue.500', boxShadow: '0 0 0 1px var(--chakra-colors-blue-500)' }}
                   required
-                  style={{
-                    width: '100%',
-                    padding: '10px',
-                    fontSize: '16px',
-                    border: localError && localError.includes('Пароли не совпадают') ? '1px solid red' : '1px solid #ccc',
-                    borderRadius: '4px',
-                    boxSizing: 'border-box'
-                  }}
                 />
-              </div>
-            )}
+              </Box>
 
-            {localError && (
-              <div style={{ 
-                color: 'red', 
-                marginBottom: '15px', 
-                padding: '10px',
-                backgroundColor: 'rgba(255, 0, 0, 0.1)',
-                borderRadius: '4px',
-                border: '1px solid red',
-                fontSize: '14px'
-              }}>
-                {localError}
-              </div>
-            )}
+              {/* Подтверждение пароля (только для регистрации) */}
+              {!isLogin && (
+                <Box>
+                  <Text as="label" display="block" mb={2} color="blue.800" fontWeight="medium">
+                    Подтвердите пароль
+                  </Text>
+                  <Input
+                    type="password"
+                    name="confirmPassword"
+                    placeholder="Повторите пароль"
+                    value={formData.confirmPassword}
+                    onChange={handleChange}
+                    size="lg"
+                    borderColor="blue.300"
+                    _hover={{ borderColor: 'blue.400' }}
+                    _focus={{ borderColor: 'blue.500', boxShadow: '0 0 0 1px var(--chakra-colors-blue-500)' }}
+                    required
+                  />
+                </Box>
+              )}
 
-            {authError && (
-              <div style={{ 
-                color: 'red', 
-                marginBottom: '15px', 
-                padding: '10px',
-                backgroundColor: 'rgba(255, 0, 0, 0.1)',
-                borderRadius: '4px',
-                border: '1px solid red',
-                fontSize: '14px'
-              }}>
-                {authError}
-                <button 
-                  onClick={clearError}
-                  style={{
-                    marginLeft: '10px',
-                    background: 'none',
-                    border: 'none',
-                    color: 'red',
-                    cursor: 'pointer',
-                    float: 'right'
-                  }}
+              {/* Локальные ошибки валидации */}
+              {localError && (
+                <Box 
+                  bg="yellow.50"
+                  border="1px solid"
+                  borderColor="orange.300"
+                  borderRadius="md"
+                  p={4}
+                  display="flex"
+                  flexDirection="column"
+                  gap={2}
+                  position="relative"
                 >
-                  ×
-                </button>
-              </div>
-            )}
+                  <Box display="flex" alignItems="center" gap={2}>
+                    <Box 
+                      width="20px" 
+                      height="20px" 
+                      borderRadius="full" 
+                      bg="orange.500" 
+                      display="flex" 
+                      alignItems="center" 
+                      justifyContent="center"
+                      color="white"
+                      fontSize="12px"
+                      fontWeight="bold"
+                    >
+                      !
+                    </Box>
+                    <Text fontWeight="bold" color="orange.700">Ошибка</Text>
+                    <CloseButton 
+                      position="absolute" 
+                      right="8px" 
+                      top="8px" 
+                      onClick={() => setLocalError(null)}
+                      color="orange.500"
+                      _hover={{ color: 'orange.700' }}
+                    />
+                  </Box>
+                  <Text color="orange.600">
+                    {localError}
+                  </Text>
+                </Box>
+              )}
 
-            <button
-              type="submit"
-              disabled={authLoading}
-              style={{
-                width: '100%',
-                padding: '12px',
-                fontSize: '16px',
-                backgroundColor: '#61dafb',
-                color: '#282c34',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: authLoading ? 'not-allowed' : 'pointer',
-                opacity: authLoading ? 0.7 : 1
-              }}
-            >
-              {authLoading ? 'Загрузка...' : (isLogin ? 'Войти' : 'Зарегистрироваться')}
-            </button>
+              {/* Ошибки от бэкенда (сохраняются пока не закрыты вручную) */}
+              {showAuthError && (
+                <Box 
+                  bg="yellow.50"
+                  border="1px solid"
+                  borderColor="orange.300"
+                  borderRadius="md"
+                  p={4}
+                  display="flex"
+                  flexDirection="column"
+                  gap={2}
+                  position="relative"
+                >
+                  <Box display="flex" alignItems="center" gap={2}>
+                    <Box 
+                      width="20px" 
+                      height="20px" 
+                      borderRadius="full" 
+                      bg="orange.500" 
+                      display="flex" 
+                      alignItems="center" 
+                      justifyContent="center"
+                      color="white"
+                      fontSize="12px"
+                      fontWeight="bold"
+                    >
+                      !
+                    </Box>
+                    <Text fontWeight="bold" color="orange.700">Ошибка авторизации</Text>
+                    <CloseButton 
+                      position="absolute" 
+                      right="8px" 
+                      top="8px" 
+                      onClick={handleClearAuthError}
+                      color="orange.500"
+                      _hover={{ color: 'orange.700' }}
+                    />
+                  </Box>
+                  <Text color="orange.600">
+                    {showAuthError}
+                  </Text>
+                </Box>
+              )}
+
+              {/* Кнопка отправки */}
+              <Button
+                type="submit"
+                colorScheme="blue"
+                size="lg"
+                bg="blue.50"
+                color="blue.800"
+                border="2px solid"
+                borderColor="blue.700"
+                _hover={{ 
+                  bg: 'blue.100',
+                  borderColor: 'blue.800' 
+                }}
+                _active={{ 
+                  bg: 'blue.200',
+                  borderColor: 'blue.900' 
+                }}
+                loading={authLoading}
+                loadingText={isLogin ? 'Вход...' : 'Регистрация...'}
+                mt={2}
+              >
+                {isLogin ? 'Войти' : 'Зарегистрироваться'}
+              </Button>
+            </Box>
           </form>
 
-          <div style={{ marginTop: '15px', textAlign: 'center' }}>
-            <button
-              onClick={switchMode}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#61dafb',
-                cursor: 'pointer',
-                textDecoration: 'underline'
-              }}
-            >
-              {isLogin ? 'Нет аккаунта? Зарегистрируйтесь' : 'Уже есть аккаунт? Войдите'}
-            </button>
-          </div>
-        </div>
-      </header>
-    </div>
+          {/* Ссылка для переключения режима */}
+          <Box textAlign="center" pt={2}>
+            <Text color="blue.700">
+              {isLogin ? 'Нет аккаунта?' : 'Уже есть аккаунт?'}{' '}
+              <Button
+                variant="ghost"
+                color="blue.600"
+                onClick={isLogin ? handleSwitchToRegister : handleSwitchToLogin}
+                _hover={{ color: 'blue.800', textDecoration: 'underline' }}
+                fontWeight="medium"
+                height="auto"
+                px={1}
+                py={0}
+                type="button"
+              >
+                {isLogin ? 'Зарегистрируйтесь' : 'Войдите'}
+              </Button>
+            </Text>
+          </Box>
+        </Box>
+      </Box>
+    </Container>
   );
 }
 

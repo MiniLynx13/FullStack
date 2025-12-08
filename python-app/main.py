@@ -1,5 +1,5 @@
 import uvicorn
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
@@ -18,6 +18,7 @@ import io
 from minio import Minio
 from minio.error import S3Error
 import uuid
+import asyncio
 
 app = FastAPI()
 
@@ -523,23 +524,43 @@ async def analyze_image(
         # Конвертируем изображение в base64
         image_base64 = base64.b64encode(image_data).decode('utf-8')
         
-        # Подготавливаем промпт
-        prompt = """Analyze this image and list all ingredients you can identify or assume in JSON format. Use this exact structure: {"ingredients": ["ingredient1", "ingredient2", ...]}"""
-        
-        # Отправляем запрос к Ollama
-        try:
-            response = ollama.chat(
-                model='qwen3-vl:4b',
-                messages=[
-                    {
-                        'role': 'user',
-                        'content': prompt,
-                        'images': [image_base64]
+        # Создаем асинхронную функцию для вызова Ollama
+        async def call_ollama(img_base64: str):
+            """Асинхронный вызов Ollama с обработкой ошибок"""
+            prompt = """Analyze this image and list all ingredients you can identify or assume in JSON format. 
+            Use this exact structure: {"ingredients": ["ingredient1", "ingredient2", ...]}
+            Be fast and concise."""
+            
+            try:
+                response = ollama.chat(
+                    model='qwen3-vl:4b',
+                    messages=[
+                        {
+                            'role': 'user',
+                            'content': prompt,
+                            'images': [img_base64]
+                        }
+                    ],
+                    options={
+                        'num_timeout': 420  # 7 минут в секундах
                     }
-                ],
-                options={
-                    'timeout': 300000 # 5 минут в миллисекундах
-                }
+                )
+                return response
+            except Exception as e:
+                print(f"Ollama error in call_ollama: {str(e)}")
+                raise
+        
+        # Отправляем запрос к Ollama с timeout
+        try:
+            # Используем asyncio.wait_for для установки таймаута
+            response = await asyncio.wait_for(
+                call_ollama(image_base64),
+                timeout=480  # 8 минут (480 секунд)
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="Анализ превысил максимальное время ожидания (8 минут)"
             )
         except Exception as e:
             print(f"Ollama error: {str(e)}")

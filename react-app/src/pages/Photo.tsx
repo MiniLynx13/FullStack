@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import '../App.css';
-import logo from '../logo.svg';
+import { 
+  Container, Box, Heading, Text, Button, Grid, GridItem, 
+  Input, Flex, Spinner, CloseButton, Image
+} from '@chakra-ui/react';
 import { useAuth } from '../hooks/useAuth';
 import { 
   analyzeImage, 
@@ -12,21 +14,191 @@ import {
   reanalyzeSavedAnalysis,
   SavedAnalysis
 } from '../services/apiService';
+import { useNavigate } from 'react-router-dom';
+
+// Простые SVG иконки стрелок
+const ChevronLeftIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <polyline points="15 18 9 12 15 6" />
+  </svg>
+);
+
+const ChevronRightIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <polyline points="9 18 15 12 9 6" />
+  </svg>
+);
+
+// Иконки в темно-синем цвете (#1e40af)
+const CircleCrossIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="12" r="10" stroke="#1e40af" strokeWidth="2"/>
+    <line x1="8" y1="8" x2="16" y2="16" stroke="#1e40af" strokeWidth="2"/>
+    <line x1="16" y1="8" x2="8" y2="16" stroke="#1e40af" strokeWidth="2"/>
+  </svg>
+);
+
+const TriangleWarningIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 9v4" stroke="#1e40af" strokeWidth="2" strokeLinecap="round"/>
+    <path d="M12 17h.01" stroke="#1e40af" strokeWidth="2" strokeLinecap="round"/>
+    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" 
+          stroke="#1e40af" strokeWidth="2" fill="none"/>
+  </svg>
+);
+
+const RefreshIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M23 4v6h-6" stroke="#1e40af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M1 20v-6h6" stroke="#1e40af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" stroke="#1e40af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M1 14l4.64 4.36A9 9 0 0 0 20.49 15" stroke="#1e40af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+
+// Компонент для уведомлений
+const Notification = ({ 
+  type = 'info', 
+  message, 
+  onClose 
+}: { 
+  type: 'success' | 'error' | 'warning' | 'info';
+  message: React.ReactNode;
+  onClose?: () => void;
+}) => {
+  const getStyles = () => {
+    switch (type) {
+      case 'success':
+        return {
+          bg: '#d1fae5',
+          borderColor: '#059669',
+          color: '#065f46'
+        };
+      case 'error':
+        return {
+          bg: '#fee2e2',
+          borderColor: '#dc2626',
+          color: '#991b1b'
+        };
+      case 'warning':
+        return {
+          bg: '#fef3c7',
+          borderColor: '#d97706',
+          color: '#92400e'
+        };
+      default:
+        return {
+          bg: '#dbeafe',
+          borderColor: '#3b82f6',
+          color: '#1e40af'
+        };
+    }
+  };
+
+  const styles = getStyles();
+
+  return (
+    <Box
+      borderRadius="md"
+      border="1px solid"
+      borderColor={styles.borderColor}
+      bg={styles.bg}
+      color={styles.color}
+      p={4}
+      mb={4}
+      position="relative"
+    >
+      <Flex align="center" justify="space-between">
+        <Box flex={1}>{message}</Box>
+        {onClose && (
+          <CloseButton
+            size="sm"
+            onClick={onClose}
+            color={styles.color}
+            _hover={{ opacity: 0.8 }}
+          />
+        )}
+      </Flex>
+    </Box>
+  );
+};
+
+// Компонент для кнопки с иконкой обновления
+const RefreshButton = ({ 
+  onClick, 
+  loading, 
+  loadingText,
+  ...props 
+}: { 
+  onClick: () => void;
+  loading: boolean;
+  loadingText: string;
+  [key: string]: any;
+}) => {
+  return (
+    <Button
+      onClick={onClick}
+      colorScheme="blue"
+      variant="outline"
+      flex={1}
+      loading={loading}
+      loadingText={loadingText}
+      {...props}
+    >
+      <Flex align="center" gap={2}>
+        <Box><RefreshIcon /></Box>
+        <Text>Перепроверить</Text>
+      </Flex>
+    </Button>
+  );
+};
+
+// Кастомная кнопка со стрелкой
+const ArrowIconButton = ({ 
+  icon, 
+  onClick, 
+  label,
+  ...props 
+}: { 
+  icon: React.ReactElement;
+  onClick: () => void;
+  label: string;
+  [key: string]: any;
+}) => {
+  return (
+    <Button
+      aria-label={label}
+      onClick={onClick}
+      colorScheme="blue"
+      variant="outline"
+      p={2}
+      minW="auto"
+      {...props}
+    >
+      {icon}
+    </Button>
+  );
+};
 
 function Photo() {
   const { isAuth } = useAuth();
+  const navigate = useNavigate();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>('');
   const [analysisResult, setAnalysisResult] = useState<ImageAnalysisResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [savedAnalyses, setSavedAnalyses] = useState<SavedAnalysis[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
+  const [currentAnalysisIndex, setCurrentAnalysisIndex] = useState<number>(0);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [reanalyzingId, setReanalyzingId] = useState<number | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [analysisToDelete, setAnalysisToDelete] = useState<number | null>(null);
 
   const handleImageSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -61,6 +233,7 @@ function Photo() {
 
     setLoading(true);
     setError(null);
+    setSuccess(null);
 
     try {
       const result = await analyzeImage(selectedImage);
@@ -85,12 +258,26 @@ function Photo() {
 
     setSaving(true);
     setError(null);
+    setSuccess(null);
 
     try {
-      await saveAnalysis(selectedImage, analysisResult);
-      // Обновляем историю после сохранения
-      await loadSavedAnalyses();
-      window.alert('Анализ успешно сохранен!');
+      const saved = await saveAnalysis(selectedImage, analysisResult);
+      // Добавляем новый анализ в начало списка
+      const newAnalysis = { ...saved, is_reanalysis: false };
+      const updatedAnalyses = [newAnalysis, ...savedAnalyses];
+      setSavedAnalyses(updatedAnalyses);
+      setCurrentAnalysisIndex(0); // Переключаемся на новый анализ
+      
+      // Очищаем текущий анализ
+      setSelectedImage(null);
+      setPreviewUrl('');
+      setAnalysisResult(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+      
+      // Показываем сообщение об успехе
+      setSuccess('Анализ успешно сохранен!');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ошибка при сохранении анализа');
     } finally {
@@ -105,6 +292,9 @@ function Photo() {
     try {
       const response = await getSavedAnalyses();
       setSavedAnalyses(response.analyses);
+      if (response.analyses.length > 0) {
+        setCurrentAnalysisIndex(0);
+      }
     } catch (err) {
       console.error('Ошибка загрузки истории:', err);
     } finally {
@@ -113,19 +303,31 @@ function Photo() {
   }, [isAuth]);
 
   const handleDeleteAnalysis = async (id: number) => {
-    if (!window.confirm('Вы уверены, что хотите удалить этот анализ?')) {
-      return;
-    }
+    setAnalysisToDelete(id);
+    setShowDeleteConfirm(true);
+  };
 
-    setDeletingId(id);
+  const confirmDeleteAnalysis = async () => {
+    if (!analysisToDelete) return;
+    
+    setDeletingId(analysisToDelete);
     try {
-      await deleteSavedAnalysis(id);
+      await deleteSavedAnalysis(analysisToDelete);
       // Обновляем список после удаления
-      setSavedAnalyses(savedAnalyses.filter(analysis => analysis.id !== id));
+      const updatedAnalyses = savedAnalyses.filter(analysis => analysis.id !== analysisToDelete);
+      setSavedAnalyses(updatedAnalyses);
+      
+      // Если удалили текущий анализ, переключаемся на предыдущий или сбрасываем
+      if (currentAnalysisIndex >= updatedAnalyses.length) {
+        setCurrentAnalysisIndex(Math.max(0, updatedAnalyses.length - 1));
+      }
+      setSuccess('Анализ успешно удален!');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ошибка при удалении анализа');
     } finally {
       setDeletingId(null);
+      setAnalysisToDelete(null);
+      setShowDeleteConfirm(false);
     }
   };
 
@@ -137,14 +339,18 @@ function Photo() {
 
     setReanalyzingId(analysisId);
     setError(null);
+    setSuccess(null);
 
     try {
       const result = await reanalyzeSavedAnalysis(analysisId);
       
       // Добавляем новый анализ в начало списка
-      setSavedAnalyses(prev => [result, ...prev]);
+      const updatedAnalyses = [result, ...savedAnalyses];
+      setSavedAnalyses(updatedAnalyses);
+      setCurrentAnalysisIndex(0); // Переключаемся на новый анализ
       
-      window.alert('Анализ успешно перепроверен с текущими медицинскими данными!');
+      // Показываем сообщение об успехе
+      setSuccess('Анализ успешно перепроверен с текущими медицинскими данными!');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ошибка при перепроверке анализа');
     } finally {
@@ -153,39 +359,50 @@ function Photo() {
   };
 
   useEffect(() => {
-    if (showHistory && isAuth) {
+    if (isAuth) {
       loadSavedAnalyses();
     }
-  }, [showHistory, isAuth, loadSavedAnalyses]);
+  }, [isAuth, loadSavedAnalyses]);
+
+  // Автоматическое скрытие уведомлений
+  useEffect(() => {
+    if (error || success) {
+      const timer = setTimeout(() => {
+        setError(null);
+        setSuccess(null);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [error, success]);
 
   const handleReset = () => {
     setSelectedImage(null);
     setPreviewUrl('');
     setAnalysisResult(null);
     setError(null);
+    setSuccess(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
   };
 
-  const toggleHistory = () => {
-    setShowHistory(!showHistory);
-  };
-
   const getIngredientStyle = (ingredient: AnalyzedIngredient) => {
     if (ingredient.is_allergen || ingredient.is_contraindication) {
       return {
-        color: 'red',
-        fontWeight: 'bold',
-        backgroundColor: 'rgba(255, 0, 0, 0.1)',
-        padding: '2px 6px',
-        borderRadius: '4px',
-        margin: '2px 0'
+        padding: '8px 12px',
+        borderRadius: '8px',
+        margin: '4px 0',
+        backgroundColor: '#fef9c3',
+        border: '1px solid #facc15',
+        color: '#713f12'
       };
     }
     return {
-      color: 'white',
-      margin: '2px 0'
+      padding: '8px 12px',
+      borderRadius: '8px',
+      margin: '4px 0',
+      backgroundColor: '#f1f5f9',
+      color: '#334155'
     };
   };
 
@@ -200,385 +417,519 @@ function Photo() {
     });
   };
 
+  const handlePrevAnalysis = () => {
+    setCurrentAnalysisIndex(prev => prev > 0 ? prev - 1 : savedAnalyses.length - 1);
+  };
+
+  const handleNextAnalysis = () => {
+    setCurrentAnalysisIndex(prev => prev < savedAnalyses.length - 1 ? prev + 1 : 0);
+  };
+
+  const currentAnalysis = savedAnalyses[currentAnalysisIndex];
+
+  // Показываем страницу для неавторизованных пользователей
+  if (!isAuth) {
+    return (
+      <Container 
+        maxW="1200px" 
+        p={0} 
+        bg="transparent"
+        display="flex"
+        alignItems="center"
+        justifyContent="center"
+        minH="calc(100vh - 200px)"
+      >
+        <Box
+          width="100%"
+          maxW="500px"
+          py={8}
+          px={6}
+          borderRadius="xl"
+          bg="#eff6ffe0"
+          boxShadow="lg"
+        >
+          <Flex direction="column" align="center" gap={6}>
+            <Heading as="h1" size="xl" color="blue.900" textAlign="center">
+              Анализ аллергенов по фото
+            </Heading>
+            
+            <Box textAlign="center">
+              <Text color="blue.800" fontSize="lg" mb={4}>
+                Для анализа изображения и проверки аллергенов необходимо авторизоваться
+              </Text>
+              
+              <Button
+                onClick={() => navigate('/authorisation')}
+                colorScheme="blue"
+                size="lg"
+                bg="blue.50"
+                color="blue.800"
+                border="2px solid"
+                borderColor="blue.700"
+                _hover={{ 
+                  bg: 'blue.100',
+                  borderColor: 'blue.800' 
+                }}
+                _active={{ 
+                  bg: 'blue.200',
+                  borderColor: 'blue.900' 
+                }}
+              >
+                Войти / Зарегистрироваться
+              </Button>
+            </Box>
+          </Flex>
+        </Box>
+      </Container>
+    );
+  }
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <h3>Анализ аллергенов по фото</h3>
-        
-        <div style={{ maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
-          {!isAuth && (
-            <div style={{ 
-              color: 'orange', 
-              marginBottom: '20px',
-              padding: '10px',
-              border: '1px solid orange',
-              borderRadius: '4px'
-            }}>
-              Для анализа изображения и проверки аллергенов необходимо авторизоваться
-            </div>
-          )}
+    <Container 
+      maxW="1200px" 
+      p={0} 
+      bg="transparent"
+      display="flex"
+      alignItems="center"
+      justifyContent="center"
+      minH="calc(100vh - 200px)"
+    >
+      <Box
+        width="100%"
+        py={8}
+        borderRadius="xl"
+        bg="transparent"
+      >
+        <Grid templateColumns={{ base: "1fr", lg: "1fr 1fr" }} gap={8}>
+          {/* Левая часть: Загрузка и анализ фото */}
+          <GridItem>
+            <Box
+              py={8}
+              px={6}
+              borderRadius="xl"
+              bg="#eff6ffe0"
+              boxShadow="lg"
+              height="100%"
+              display="flex"
+              flexDirection="column"
+            >
+              <Heading as="h1" size="xl" color="blue.900" mb={6}>
+                Анализ аллергенов по фото
+              </Heading>
 
-          {/* История анализов */}
-          {isAuth && (
-            <div style={{ marginBottom: '20px', textAlign: 'left' }}>
-              <button
-                onClick={toggleHistory}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor: showHistory ? '#61dafb' : 'transparent',
-                  color: showHistory ? '#282c34' : '#61dafb',
-                  border: '1px solid #61dafb',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  marginBottom: '10px'
-                }}
-              >
-                {showHistory ? 'Скрыть историю' : 'Показать историю анализов'} 
-                {savedAnalyses.length > 0 && ` (${savedAnalyses.length})`}
-              </button>
-
-              {showHistory && (
-                <div style={{ 
-                  marginTop: '20px',
-                  padding: '20px',
-                  border: '1px solid #61dafb',
-                  borderRadius: '8px',
-                  backgroundColor: 'rgba(97, 218, 251, 0.05)'
-                }}>
-                  <h4 style={{ marginBottom: '15px', color: '#61dafb' }}>История анализов</h4>
-                  
-                  {historyLoading ? (
-                    <div style={{ color: '#61dafb', textAlign: 'center', padding: '20px' }}>
-                      Загрузка истории...
-                    </div>
-                  ) : savedAnalyses.length === 0 ? (
-                    <div style={{ color: '#ccc', textAlign: 'center', padding: '20px' }}>
-                      История анализов пуста. Проанализируйте и сохраните первый анализ!
-                    </div>
-                  ) : (
-                    <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
-                      {savedAnalyses.map((analysis) => (
-                        <div 
-                          key={analysis.id}
-                          style={{
-                            marginBottom: '15px',
-                            padding: '15px',
-                            border: '1px solid rgba(97, 218, 251, 0.3)',
-                            borderRadius: '6px',
-                            backgroundColor: analysis.is_reanalysis 
-                              ? 'rgba(97, 218, 251, 0.15)' 
-                              : 'rgba(97, 218, 251, 0.1)'
-                          }}
-                        >
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ 
-                                display: 'flex', 
-                                alignItems: 'center', 
-                                marginBottom: '10px',
-                                gap: '10px'
-                              }}>
-                                {analysis.image_url && (
-                                  <img 
-                                    src={analysis.image_url} 
-                                    alt="Сохраненный анализ"
-                                    style={{
-                                      width: '80px',
-                                      height: '80px',
-                                      objectFit: 'cover',
-                                      borderRadius: '4px',
-                                      border: '1px solid #61dafb'
-                                    }}
-                                  />
-                                )}
-                                <div>
-                                  <div style={{ color: '#61dafb', fontWeight: 'bold' }}>
-                                    Анализ от {formatDate(analysis.created_at)}
-                                    {analysis.is_reanalysis && (
-                                      <span style={{ 
-                                        fontSize: '12px', 
-                                        color: '#61dafb', 
-                                        fontStyle: 'italic',
-                                        marginLeft: '10px'
-                                      }}>
-                                        🔄 Перепроверено
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div style={{ fontSize: '14px', color: '#ccc', marginTop: '5px' }}>
-                                    Ингредиентов: {analysis.ingredients_count} | 
-                                    Предупреждений: {analysis.warnings_count}
-                                    {analysis.original_analysis_id && (
-                                      <span style={{ marginLeft: '10px', fontSize: '12px', color: '#999' }}>
-                                        Копия анализа #{analysis.original_analysis_id}
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                              
-                              <div style={{ marginTop: '10px' }}>
-                                <div style={{ 
-                                  color: analysis.warnings_count > 0 ? 'red' : 'green',
-                                  fontSize: '14px',
-                                  fontWeight: 'bold',
-                                  marginBottom: '5px'
-                                }}>
-                                  {analysis.warnings_count > 0 
-                                    ? '⚠️ Обнаружены аллергены/противопоказания' 
-                                    : '✓ Безопасно'}
-                                </div>
-                                
-                                <div style={{ maxHeight: '100px', overflowY: 'auto', marginBottom: '10px' }}>
-                                  {analysis.analysis_result.ingredients.slice(0, 5).map((ingredient, idx) => (
-                                    <div 
-                                      key={idx}
-                                      style={getIngredientStyle(ingredient)}
-                                    >
-                                      • {ingredient.name}
-                                      {ingredient.is_allergen && ' 🚫'}
-                                      {ingredient.is_contraindication && ' ⚠️'}
-                                    </div>
-                                  ))}
-                                  {analysis.analysis_result.ingredients.length > 5 && (
-                                    <div style={{ color: '#ccc', fontSize: '12px', marginTop: '5px' }}>
-                                      ... и еще {analysis.analysis_result.ingredients.length - 5} ингредиентов
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                              
-                              {/* Кнопки управления */}
-                              <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-                                <button
-                                  onClick={() => handleReanalyzeAnalysis(analysis.id)}
-                                  disabled={reanalyzingId === analysis.id}
-                                  style={{
-                                    padding: '5px 10px',
-                                    backgroundColor: reanalyzingId === analysis.id ? '#ccc' : 'rgba(97, 218, 251, 0.2)',
-                                    color: '#61dafb',
-                                    border: '1px solid #61dafb',
-                                    borderRadius: '4px',
-                                    cursor: reanalyzingId === analysis.id ? 'not-allowed' : 'pointer',
-                                    fontSize: '12px',
-                                    flex: 1
-                                  }}
-                                >
-                                  {reanalyzingId === analysis.id ? 'Перепроверка...' : '🔄 Перепроверить с текущими медицинскими данными'}
-                                </button>
-                                
-                                <button
-                                  onClick={() => handleDeleteAnalysis(analysis.id)}
-                                  disabled={deletingId === analysis.id}
-                                  style={{
-                                    padding: '5px 10px',
-                                    backgroundColor: deletingId === analysis.id ? '#ccc' : 'rgba(255, 0, 0, 0.2)',
-                                    color: 'red',
-                                    border: '1px solid red',
-                                    borderRadius: '4px',
-                                    cursor: deletingId === analysis.id ? 'not-allowed' : 'pointer',
-                                    fontSize: '12px',
-                                    minWidth: '80px'
-                                  }}
-                                >
-                                  {deletingId === analysis.id ? 'Удаление...' : 'Удалить'}
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Основной интерфейс анализа */}
-          {isAuth && (
-            <div style={{ marginBottom: '20px' }}>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleImageSelect}
-                ref={fileInputRef}
-                style={{ display: 'none' }}
-                id="image-upload"
-              />
-              <label
-                htmlFor="image-upload"
-                style={{
-                  display: 'inline-block',
-                  padding: '12px 24px',
-                  backgroundColor: '#61dafb',
-                  color: '#282c34',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '16px',
-                  fontWeight: 'bold'
-                }}
-              >
-                Выбрать изображение
-              </label>
-              {selectedImage && (
-                <span style={{ marginLeft: '10px', color: '#61dafb' }}>
-                  {selectedImage.name}
-                </span>
-              )}
-            </div>
-          )}
-
-          {previewUrl && (
-            <div style={{ marginBottom: '20px' }}>
-              <img 
-                src={previewUrl} 
-                alt="Preview" 
-                style={{ 
-                  maxWidth: '300px', 
-                  maxHeight: '300px',
-                  border: '2px solid #61dafb',
-                  borderRadius: '8px'
-                }} 
-              />
-            </div>
-          )}
-
-          {selectedImage && (
-            <div style={{ marginBottom: '20px' }}>
-              <button
-                onClick={handleAnalyze}
-                disabled={loading}
-                style={{
-                  padding: '12px 24px',
-                  fontSize: '16px',
-                  backgroundColor: loading ? '#ccc' : '#61dafb',
-                  color: '#282c34',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: loading ? 'not-allowed' : 'pointer',
-                  marginRight: '10px'
-                }}
-              >
-                {loading ? 'Анализ...' : 'Анализировать изображение'}
-              </button>
-              
-              <button
-                onClick={handleReset}
-                style={{
-                  padding: '12px 24px',
-                  fontSize: '16px',
-                  backgroundColor: 'transparent',
-                  color: '#61dafb',
-                  border: '1px solid #61dafb',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
-                }}
-              >
-                Сбросить
-              </button>
-            </div>
-          )}
-
-          {error && (
-            <div style={{ 
-              color: 'red', 
-              marginBottom: '20px',
-              padding: '10px',
-              backgroundColor: 'rgba(255, 0, 0, 0.1)',
-              border: '1px solid red',
-              borderRadius: '4px'
-            }}>
-              {error}
-            </div>
-          )}
-
-          {analysisResult && (
-            <div style={{ 
-              textAlign: 'left',
-              marginTop: '20px',
-              padding: '20px',
-              border: '1px solid #61dafb',
-              borderRadius: '8px',
-              backgroundColor: 'rgba(97, 218, 251, 0.1)'
-            }}>
-              <h4>Результаты анализа:</h4>
-              
-              <div style={{ marginBottom: '20px' }}>
-                <h5>Ингредиенты:</h5>
-                <div>
-                  {analysisResult.ingredients.map((ingredient, index) => (
-                    <div 
-                      key={index} 
-                      style={getIngredientStyle(ingredient)}
+              {/* Выбор изображения */}
+              <Box mb={6}>
+                <Text as="label" display="block" mb={3} color="blue.800" fontWeight="medium">
+                  Выберите изображение
+                </Text>
+                <Flex gap={4} align="center">
+                  <Box flex={1}>
+                    <Input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageSelect}
+                      ref={fileInputRef}
+                      size="lg"
+                      borderColor="blue.300"
+                      _hover={{ borderColor: 'blue.400' }}
+                      padding={1}
+                    />
+                  </Box>
+                  {selectedImage && (
+                    <Button
+                      onClick={handleReset}
+                      size="lg"
+                      variant="outline"
+                      colorScheme="blue"
+                      borderColor="blue.300"
+                      _hover={{ borderColor: 'blue.400' }}
                     >
-                      • {ingredient.name}
-                      {ingredient.is_allergen && ' 🚫'}
-                      {ingredient.is_contraindication && ' ⚠️'}
-                    </div>
-                  ))}
-                </div>
-              </div>
+                      Сбросить
+                    </Button>
+                  )}
+                </Flex>
+                {selectedImage && (
+                  <Text mt={2} color="blue.700" fontSize="sm">
+                    Выбрано: {selectedImage.name}
+                  </Text>
+                )}
+              </Box>
 
-              {analysisResult.warnings.length > 0 && (
-                <div style={{ 
-                  color: 'red',
-                  marginBottom: '20px',
-                  padding: '15px',
-                  backgroundColor: 'rgba(255, 0, 0, 0.1)',
-                  border: '1px solid red',
-                  borderRadius: '4px'
-                }}>
-                  <h5>Предупреждения:</h5>
-                  <ul style={{ margin: 0, paddingLeft: '20px' }}>
-                    {analysisResult.warnings.map((warning, index) => (
-                      <li key={index}>{warning}</li>
-                    ))}
-                  </ul>
-                </div>
+              {/* Предпросмотр */}
+              {previewUrl && (
+                <Box mb={6} textAlign="center">
+                  <Image
+                    src={previewUrl}
+                    alt="Preview"
+                    borderRadius="lg"
+                    boxShadow="md"
+                    maxH="300px"
+                    mx="auto"
+                  />
+                </Box>
               )}
 
-              {analysisResult.warnings.length === 0 && (
-                <div style={{ 
-                  color: 'green',
-                  padding: '10px',
-                  backgroundColor: 'rgba(0, 255, 0, 0.1)',
-                  border: '1px solid green',
-                  borderRadius: '4px',
-                  marginBottom: '15px'
-                }}>
-                  Не обнаружено аллергенов и противопоказаний
-                </div>
+              {/* Кнопка анализа */}
+              {selectedImage && (
+                <Box mb={6}>
+                  <Button
+                    onClick={handleAnalyze}
+                    colorScheme="blue"
+                    size="lg"
+                    width="100%"
+                    bg="blue.50"
+                    color="blue.800"
+                    border="2px solid"
+                    borderColor="blue.700"
+                    _hover={{ 
+                      bg: 'blue.100',
+                      borderColor: 'blue.800' 
+                    }}
+                    _active={{ 
+                      bg: 'blue.200',
+                      borderColor: 'blue.900' 
+                    }}
+                    loading={loading}
+                    loadingText="Анализ..."
+                  >
+                    Анализировать изображение
+                  </Button>
+                </Box>
               )}
 
-              {/* Кнопка сохранения */}
-              <div style={{ textAlign: 'center', marginTop: '20px' }}>
-                <button
-                  onClick={handleSaveAnalysis}
-                  disabled={saving}
-                  style={{
-                    padding: '12px 24px',
-                    fontSize: '16px',
-                    backgroundColor: saving ? '#ccc' : '#28a745',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: saving ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  {saving ? 'Сохранение...' : '💾 Сохранить результат'}
-                </button>
-                <div style={{ fontSize: '12px', color: '#ccc', marginTop: '5px' }}>
-                  Результат будет сохранен в вашей истории
-                </div>
-              </div>
-            </div>
+              {/* Индикатор загрузки */}
+              {loading && (
+                <Flex justify="center" my={6}>
+                  <Spinner size="xl" color="blue.500" />
+                </Flex>
+              )}
+
+              {/* Результаты анализа */}
+              {analysisResult && (
+                <Box flex={1} overflow="auto">
+                  <Box mb={6}>
+                    <Heading as="h2" size="lg" color="blue.900" mb={4}>
+                      Результаты анализа
+                    </Heading>
+                    
+                    <Box mb={6}>
+                      <Text fontWeight="bold" color="blue.800" mb={2}>
+                        Ингредиенты:
+                      </Text>
+                      <Box maxH="500px" overflowY="auto" pr={2}>
+                        {analysisResult.ingredients.map((ingredient, index) => (
+                          <Flex 
+                            key={index}
+                            align="center"
+                            gap={3}
+                            style={getIngredientStyle(ingredient)}
+                          >
+                            <Text>• {ingredient.name}</Text>
+                            {ingredient.is_allergen && <CircleCrossIcon />}
+                            {ingredient.is_contraindication && <TriangleWarningIcon />}
+                          </Flex>
+                        ))}
+                      </Box>
+                    </Box>
+
+                    {analysisResult.warnings.length > 0 ? (
+                      <Notification 
+                        type="warning"
+                        message={
+                          <Box>
+                            <Text fontWeight="bold" mb={2}>
+                              Обнаружены аллергены/противопоказания:
+                            </Text>
+                            <Box as="ul" pl={5}>
+                              {analysisResult.warnings.map((warning, index) => (
+                                <li key={index}>{warning}</li>
+                              ))}
+                            </Box>
+                          </Box>
+                        }
+                      />
+                    ) : (
+                      <Notification 
+                        type="success"
+                        message="Не обнаружено аллергенов и противопоказаний"
+                      />
+                    )}
+                  </Box>
+
+                  {/* Кнопка сохранения */}
+                  <Button
+                    onClick={handleSaveAnalysis}
+                    colorScheme="blue"
+                    size="lg"
+                    width="100%"
+                    bg="blue.50"
+                    color="blue.800"
+                    border="2px solid"
+                    borderColor="blue.700"
+                    _hover={{ 
+                      bg: 'blue.100',
+                      borderColor: 'blue.800' 
+                    }}
+                    _active={{ 
+                      bg: 'blue.200',
+                      borderColor: 'blue.900' 
+                    }}
+                    loading={saving}
+                    loadingText="Сохранение..."
+                  >
+                    Сохранить результат
+                  </Button>
+                </Box>
+              )}
+            </Box>
+          </GridItem>
+
+          {/* Правая часть: История анализов */}
+          <GridItem>
+            <Box
+              py={8}
+              px={6}
+              borderRadius="xl"
+              bg="#eff6ffe0"
+              boxShadow="lg"
+              height="100%"
+              display="flex"
+              flexDirection="column"
+            >
+              <Heading as="h2" size="xl" color="blue.900" mb={6}>
+                История анализов
+              </Heading>
+
+              {historyLoading ? (
+                <Flex justify="center" align="center" flex={1}>
+                  <Spinner size="xl" color="blue.500" />
+                </Flex>
+              ) : savedAnalyses.length === 0 ? (
+                <Flex direction="column" align="center" justify="center" flex={1} textAlign="center">
+                  <Text color="blue.800" fontSize="lg" mb={4}>
+                    История анализов пуста
+                  </Text>
+                  <Text color="blue.800">
+                    Проанализируйте и сохраните первый анализ!
+                  </Text>
+                </Flex>
+              ) : (
+                <>
+                  {/* Информация о текущем анализе */}
+                  <Flex justify="space-between" align="center" mb={6}>
+                    <Text color="blue.800" fontSize="lg">
+                      Анализ {savedAnalyses.length - currentAnalysisIndex} из {savedAnalyses.length}
+                    </Text>
+                    {savedAnalyses.length > 1 && (
+                      <Flex gap={2}>
+                        <ArrowIconButton
+                          icon={<ChevronLeftIcon />}
+                          onClick={handlePrevAnalysis}
+                          label="Предыдущий анализ"
+                          borderColor="blue.300"
+                          _hover={{ borderColor: 'blue.400' }}
+                        />
+                        <ArrowIconButton
+                          icon={<ChevronRightIcon />}
+                          onClick={handleNextAnalysis}
+                          label="Следующий анализ"
+                          borderColor="blue.300"
+                          _hover={{ borderColor: 'blue.400' }}
+                        />
+                      </Flex>
+                    )}
+                  </Flex>
+
+                  {/* Отображение текущего анализа */}
+                  {currentAnalysis && (
+                    <Box
+                      borderRadius="lg"
+                      border="1px solid"
+                      borderColor="blue.200"
+                      bg="white"
+                      p={4}
+                      mb={6}
+                    >
+                      <Flex direction="column" gap={4}>
+                        {/* Заголовок анализа */}
+                        <Flex justify="space-between" align="start">
+                          <Box>
+                            <Heading size="md" color="blue.900" mb={2}>
+                              Анализ от {formatDate(currentAnalysis.created_at)}
+                              {currentAnalysis.is_reanalysis && (
+                                <Text fontSize="sm" color="blue.700" mt={1}>
+                                  <Box as="span" display="inline-flex" alignItems="center" mr={1}>
+                                    <RefreshIcon />
+                                  </Box>
+                                  Перепроверено с обновленными данными
+                                </Text>
+                              )}
+                            </Heading>
+                            <Text color="blue.700" fontSize="sm">
+                              Ингредиентов: {currentAnalysis.ingredients_count} | 
+                              Предупреждений: {currentAnalysis.warnings_count}
+                            </Text>
+                          </Box>
+                          {currentAnalysis.image_url && (
+                            <Image
+                              src={currentAnalysis.image_url}
+                              alt="Сохраненный анализ"
+                              width="80px"
+                              height="80px"
+                              objectFit="cover"
+                              borderRadius="md"
+                              border="1px solid"
+                              borderColor="blue.300"
+                            />
+                          )}
+                        </Flex>
+
+                        {/* Статус безопасности */}
+                        <Box>
+                          <Text fontWeight="bold" color="blue.800" mb={2}>
+                            Статус:
+                          </Text>
+                          {currentAnalysis.warnings_count > 0 ? (
+                            <Notification 
+                              type="warning"
+                              message="Обнаружены аллергены/противопоказания"
+                            />
+                          ) : (
+                            <Notification 
+                              type="success"
+                              message="Безопасно"
+                            />
+                          )}
+                        </Box>
+
+                        {/* Ингредиенты */}
+                        <Box>
+                          <Text fontWeight="bold" color="blue.800" mb={2}>
+                            Ингредиенты:
+                          </Text>
+                          <Box maxH="500px" overflowY="auto" pr={2}>
+                            {currentAnalysis.analysis_result.ingredients.map((ingredient, idx) => (
+                              <Flex 
+                                key={idx}
+                                align="center"
+                                gap={3}
+                                style={getIngredientStyle(ingredient)}
+                              >
+                                <Text>• {ingredient.name}</Text>
+                                {ingredient.is_allergen && <CircleCrossIcon />}
+                                {ingredient.is_contraindication && <TriangleWarningIcon />}
+                              </Flex>
+                            ))}
+                          </Box>
+                        </Box>
+
+                        {/* Кнопки управления */}
+                        <Flex gap={3} mt={4}>
+                          <RefreshButton
+                            onClick={() => handleReanalyzeAnalysis(currentAnalysis.id)}
+                            loading={reanalyzingId === currentAnalysis.id}
+                            loadingText="Перепроверка"
+                            borderColor="blue.300"
+                            _hover={{ borderColor: 'blue.400' }}
+                          />
+                          <Button
+                            onClick={() => handleDeleteAnalysis(currentAnalysis.id)}
+                            colorScheme="red"
+                            variant="outline"
+                            loading={deletingId === currentAnalysis.id}
+                            loadingText="Удаление"
+                            borderColor="blue.300"
+                            _hover={{ borderColor: 'blue.400' }}
+                          >
+                            Удалить
+                          </Button>
+                        </Flex>
+                      </Flex>
+                    </Box>
+                  )}
+                </>
+              )}
+            </Box>
+          </GridItem>
+        </Grid>
+      </Box>
+
+      {/* Уведомления об ошибках/успехе */}
+      {(error || success) && (
+        <Box 
+          position="fixed" 
+          bottom="4" 
+          right="4" 
+          maxW="400px"
+          zIndex={999}
+        >
+          {error && (
+            <Notification 
+              type="error"
+              message={error}
+              onClose={() => setError(null)}
+            />
           )}
-        </div>
-      </header>
-    </div>
+          {success && (
+            <Notification 
+              type="success"
+              message={success}
+              onClose={() => setSuccess(null)}
+            />
+          )}
+        </Box>
+      )}
+
+      {/* Модальное окно подтверждения удаления */}
+      {showDeleteConfirm && (
+        <Box
+          position="fixed"
+          top="0"
+          left="0"
+          right="0"
+          bottom="0"
+          bg="rgba(0,0,0,0.5)"
+          display="flex"
+          alignItems="center"
+          justifyContent="center"
+          zIndex={1000}
+        >
+          <Box
+            bg="white"
+            borderRadius="lg"
+            p={6}
+            maxW="400px"
+            width="90%"
+          >
+            <Heading size="md" color="blue.900" mb={4}>
+              Подтверждение удаления
+            </Heading>
+            <Text color="blue.800" mb={6}>
+              Вы уверены, что хотите удалить этот анализ?
+            </Text>
+            <Flex gap={3} justify="flex-end">
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  setAnalysisToDelete(null);
+                }}
+              >
+                Отмена
+              </Button>
+              <Button 
+                colorScheme="red" 
+                onClick={confirmDeleteAnalysis}
+                loading={deletingId !== null}
+                loadingText="Удаление"
+              >
+                Удалить
+              </Button>
+            </Flex>
+          </Box>
+        </Box>
+      )}
+    </Container>
   );
 }
 
