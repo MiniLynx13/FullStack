@@ -80,6 +80,15 @@ class UserLogin(BaseModel):
     username: str
     password: str
 
+class UpdateProfileData(BaseModel):
+    username: Optional[str] = None
+    email: Optional[str] = None
+
+class ChangePasswordData(BaseModel):
+    old_password: str
+    new_password: str
+    confirm_password: str
+
 class UserResponse(BaseModel):
     id: int
     username: str
@@ -167,8 +176,6 @@ def init_db():
             ingredients_count INTEGER DEFAULT 0,
             warnings_count INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            ref_count INTEGER DEFAULT 1,
-            original_analysis_id INTEGER DEFAULT NULL,
             FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
         )
     ''')
@@ -342,6 +349,211 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         created_at=user['created_at']
     )
 
+# Обновление профиля пользователя
+@app.post("/update-profile")
+async def update_profile(
+    profile_data: UpdateProfileData,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    user = get_user_by_token(credentials.credentials)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный или просроченный токен"
+        )
+    
+    # Проверяем, что есть хотя бы одно поле для обновления
+    if profile_data.username is None and profile_data.email is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Не указаны данные для обновления"
+        )
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    try:
+        # Проверяем, что новые username и email не заняты другими пользователями
+        if profile_data.username is not None and profile_data.username.strip():
+            username = profile_data.username.strip()
+            cur.execute('SELECT id FROM users WHERE username = ? AND id != ?',
+                       (username, user['id']))
+            if cur.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Имя пользователя уже занято"
+                )
+        
+        if profile_data.email is not None and profile_data.email.strip():
+            email = profile_data.email.strip()
+            cur.execute('SELECT id FROM users WHERE email = ? AND id != ?',
+                       (email, user['id']))
+            if cur.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email уже занят"
+                )
+        
+        # Собираем поля для обновления
+        update_fields = []
+        update_values = []
+        
+        if profile_data.username is not None and profile_data.username.strip():
+            update_fields.append('username = ?')
+            update_values.append(profile_data.username.strip())
+        
+        if profile_data.email is not None and profile_data.email.strip():
+            update_fields.append('email = ?')
+            update_values.append(profile_data.email.strip())
+        
+        # Если после очистки полей нечего обновлять
+        if not update_fields:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Не указаны валидные данные для обновления"
+            )
+        
+        update_values.append(user['id'])
+        
+        # Обновляем данные пользователя
+        update_query = f'UPDATE users SET {", ".join(update_fields)} WHERE id = ?'
+        cur.execute(update_query, update_values)
+        
+        # Получаем обновленные данные пользователя
+        cur.execute(
+            'SELECT id, username, email, created_at FROM users WHERE id = ?',
+            (user['id'],)
+        )
+        
+        updated_user = cur.fetchone()
+        conn.commit()
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка при обновлении профиля: {str(e)}"
+        )
+    finally:
+        conn.close()
+    
+    return UserResponse(
+        id=updated_user['id'],
+        username=updated_user['username'],
+        email=updated_user['email'],
+        created_at=updated_user['created_at']
+    )
+
+# Смена пароля
+@app.post("/change-password")
+async def change_password(
+    password_data: ChangePasswordData,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    user = get_user_by_token(credentials.credentials)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный или просроченный токен"
+        )
+    
+    # Проверяем совпадение паролей
+    if password_data.new_password != password_data.confirm_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Новые пароли не совпадают"
+        )
+    
+    # Проверяем длину нового пароля
+    if len(password_data.new_password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Новый пароль должен содержать минимум 6 символов"
+        )
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Проверяем старый пароль
+    old_password_hash = hash_password(password_data.old_password)
+    cur.execute(
+        'SELECT id FROM users WHERE id = ? AND password_hash = ?',
+        (user['id'], old_password_hash)
+    )
+    
+    if not cur.fetchone():
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Неверный старый пароль"
+        )
+    
+    # Обновляем пароль
+    new_password_hash = hash_password(password_data.new_password)
+    cur.execute(
+        'UPDATE users SET password_hash = ? WHERE id = ?',
+        (new_password_hash, user['id'])
+    )
+    
+    conn.commit()
+    conn.close()
+    
+    return {"message": "Пароль успешно изменен"}
+
+# Удаление аккаунта
+@app.delete("/delete-account")
+async def delete_account(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    user = get_user_by_token(credentials.credentials)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный или просроченный токен"
+        )
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    user_id = user['id']
+    
+    try:
+        cur.execute('SELECT image_path FROM saved_analyses WHERE user_id = ?', (user_id,))
+        saved_images = cur.fetchall()
+        
+        for img in saved_images:
+            try:
+                minio_client.remove_object(MINIO_BUCKET_NAME, img['image_path'])
+                print(f"Изображение удалено из Minio: {img['image_path']}")
+            except Exception as e:
+                print(f"Ошибка при удалении изображения из Minio: {e}")
+        
+        cur.execute('DELETE FROM saved_analyses WHERE user_id = ?', (user_id,))
+        cur.execute('DELETE FROM user_medical_data WHERE user_id = ?', (user_id,))
+        cur.execute('DELETE FROM user_tokens WHERE user_id = ?', (user_id,))
+        cur.execute('DELETE FROM users WHERE id = ?', (user_id,))
+        
+        conn.commit()
+        
+        print(f"Аккаунт пользователя {user_id} удален со всеми связанными данными")
+        
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        print(f"Ошибка при удалении аккаунта: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка при удалении аккаунта: {str(e)}"
+        )
+    
+    conn.close()
+    
+    return {"message": "Аккаунт успешно удален"}
+
 # Получение медицинских данных пользователя
 @app.get("/medical-data")
 async def get_medical_data(credentials: HTTPAuthorizationCredentials = Depends(security)):
@@ -383,7 +595,8 @@ async def get_medical_data(credentials: HTTPAuthorizationCredentials = Depends(s
 @app.post("/medical-data")
 async def save_medical_data(
     medical_data: MedicalData,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     user = get_user_by_token(credentials.credentials)
     
@@ -421,6 +634,11 @@ async def save_medical_data(
         )
     
     conn.commit()
+
+    try:
+        background_tasks.add_task(reanalyze_all_saved_analyses, user['id'])
+    except Exception as e:
+        print(f"Ошибка при инициации пересмотра анализов: {e}")
     
     # Получаем обновленные данные
     cur.execute(
@@ -531,8 +749,8 @@ async def analyze_image(
             Use this exact structure: {"ingredients": ["ingredient1", "ingredient2", ...]}
             Be fast and concise."""
             
-            try:
-                response = ollama.chat(
+            def sync_ollama():
+                return ollama.chat(
                     model='qwen3-vl:4b',
                     messages=[
                         {
@@ -542,13 +760,13 @@ async def analyze_image(
                         }
                     ],
                     options={
-                        'num_timeout': 420  # 7 минут в секундах
+                        'num_timeout': 420 # 7 минут в секундах
                     }
                 )
-                return response
-            except Exception as e:
-                print(f"Ollama error in call_ollama: {str(e)}")
-                raise
+            
+            # Запускаем синхронную функцию в отдельном потоке
+            response = await asyncio.to_thread(sync_ollama)
+            return response
         
         # Отправляем запрос к Ollama с timeout
         try:
@@ -858,16 +1076,14 @@ async def reanalyze_saved_analysis(
     
     # Получаем сохраненный анализ
     cur.execute('''
-        SELECT id, user_id, image_path, analysis_result, 
-               ingredients_count, warnings_count, created_at,
-               original_analysis_id, ref_count
+        SELECT id, user_id, analysis_result, warnings_count
         FROM saved_analyses 
         WHERE id = ? AND user_id = ?
     ''', (analysis_id, user['id']))
     
-    original_analysis = cur.fetchone()
+    analysis = cur.fetchone()
     
-    if not original_analysis:
+    if not analysis:
         conn.close()
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -883,7 +1099,7 @@ async def reanalyze_saved_analysis(
     
     # Парсим старый результат анализа
     try:
-        old_result = json.loads(original_analysis['analysis_result'])
+        old_result = json.loads(analysis['analysis_result'])
     except json.JSONDecodeError:
         conn.close()
         raise HTTPException(
@@ -938,59 +1154,36 @@ async def reanalyze_saved_analysis(
             new_warnings.append(f"Противопоказание: {ingredient_name}")
             new_warnings_count += 1
     
-    # Создаем новый результат анализа
+    # Обновляем анализ в базе
     new_result = {
         "ingredients": new_ingredients,
         "warnings": new_warnings,
         "original_response": old_result.get('original_response', 'Перепроверено с обновленными медицинскими данными')
     }
     
-    # Определяем ID оригинального анализа (если это уже копия, ссылаемся на оригинал)
-    original_analysis_id = original_analysis['original_analysis_id'] or original_analysis['id']
-    
-    # Создаем новую копию анализа
-    cur.execute('''
-        INSERT INTO saved_analyses 
-        (user_id, image_path, analysis_result, ingredients_count, 
-         warnings_count, original_analysis_id, ref_count)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        user['id'],
-        original_analysis['image_path'],
-        json.dumps(new_result),
-        original_analysis['ingredients_count'],
-        new_warnings_count,
-        original_analysis_id,
-        1  # Начальное значение счетчика ссылок для копии
-    ))
-    
-    new_analysis_id = cur.lastrowid
-    
-    # Увеличиваем счетчик ссылок для оригинального анализа или его копий
     cur.execute('''
         UPDATE saved_analyses 
-        SET ref_count = ref_count + 1 
-        WHERE id = ? OR original_analysis_id = ?
-    ''', (original_analysis_id, original_analysis_id))
+        SET analysis_result = ?, warnings_count = ?
+        WHERE id = ?
+    ''', (json.dumps(new_result), new_warnings_count, analysis_id))
     
     conn.commit()
     
-    # Получаем созданный анализ
+    # Получаем обновленный анализ с изображением
     cur.execute('''
         SELECT id, user_id, image_path, analysis_result, 
-               ingredients_count, warnings_count, created_at,
-               original_analysis_id, ref_count
+               ingredients_count, warnings_count, created_at
         FROM saved_analyses 
         WHERE id = ?
-    ''', (new_analysis_id,))
+    ''', (analysis_id,))
     
-    new_analysis = cur.fetchone()
+    updated_analysis = cur.fetchone()
     
     # Генерируем временную ссылку на изображение
     try:
         image_url = minio_client.presigned_get_object(
             MINIO_BUCKET_NAME,
-            new_analysis['image_path'],
+            updated_analysis['image_path'],
             expires=timedelta(hours=1)
         )
     except Exception as e:
@@ -998,20 +1191,121 @@ async def reanalyze_saved_analysis(
         image_url = None
     
     result = {
-        "id": new_analysis['id'],
-        "user_id": new_analysis['user_id'],
+        "id": updated_analysis['id'],
+        "user_id": updated_analysis['user_id'],
         "image_url": image_url,
-        "analysis_result": json.loads(new_analysis['analysis_result']),
-        "ingredients_count": new_analysis['ingredients_count'],
-        "warnings_count": new_analysis['warnings_count'],
-        "created_at": new_analysis['created_at'],
-        "original_analysis_id": new_analysis['original_analysis_id'],
-        "is_reanalysis": True,
+        "analysis_result": json.loads(updated_analysis['analysis_result']),
+        "ingredients_count": updated_analysis['ingredients_count'],
+        "warnings_count": updated_analysis['warnings_count'],
+        "created_at": updated_analysis['created_at'],
         "message": "Анализ успешно перепроверен с обновленными медицинскими данными"
     }
     
     conn.close()
     return result
+
+async def reanalyze_all_saved_analyses(user_id: int):
+    """Пересматривает все сохраненные анализы пользователя"""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    try:
+        # Получаем медицинские данные пользователя
+        cur.execute(
+            'SELECT contraindications, allergens FROM user_medical_data WHERE user_id = ?',
+            (user_id,)
+        )
+        medical_data = cur.fetchone()
+        
+        if not medical_data:
+            print(f"У пользователя {user_id} нет медицинских данных")
+            return
+        
+        # Получаем все сохраненные анализы пользователя
+        cur.execute('''
+            SELECT id, analysis_result 
+            FROM saved_analyses 
+            WHERE user_id = ?
+        ''', (user_id,))
+        
+        analyses = cur.fetchall()
+        
+        # Извлекаем аллергены и противопоказания
+        allergens = []
+        contraindications = []
+        
+        if medical_data['allergens']:
+            allergens = [a.strip().lower() for a in re.split(r'[,;.\s\n]+', medical_data['allergens']) if a.strip()]
+        if medical_data['contraindications']:
+            contraindications = [c.strip().lower() for c in re.split(r'[,;.\s\n]+', medical_data['contraindications']) if c.strip()]
+        
+        # Пересматриваем каждый анализ
+        for analysis in analyses:
+            try:
+                old_result = json.loads(analysis['analysis_result'])
+                
+                new_ingredients = []
+                new_warnings = []
+                new_warnings_count = 0
+                
+                # Анализируем ингредиенты с новыми медицинскими данными
+                for ingredient_data in old_result.get('ingredients', []):
+                    ingredient_name = ingredient_data.get('name', '')
+                    ingredient_lower = ingredient_name.lower()
+                    
+                    is_allergen = False
+                    is_contraindication = False
+                    
+                    # Проверяем на аллергены
+                    for allergen in allergens:
+                        if allergen and allergen in ingredient_lower:
+                            is_allergen = True
+                            break
+                    
+                    # Проверяем на противопоказания
+                    for contra in contraindications:
+                        if contra and contra in ingredient_lower:
+                            is_contraindication = True
+                            break
+                    
+                    new_ingredients.append({
+                        'name': ingredient_name,
+                        'is_allergen': is_allergen,
+                        'is_contraindication': is_contraindication
+                    })
+                    
+                    if is_allergen:
+                        new_warnings.append(f"Аллерген обнаружен: {ingredient_name}")
+                        new_warnings_count += 1
+                    if is_contraindication:
+                        new_warnings.append(f"Противопоказание: {ingredient_name}")
+                        new_warnings_count += 1
+                
+                # Обновляем анализ в базе
+                new_result = {
+                    "ingredients": new_ingredients,
+                    "warnings": new_warnings,
+                    "original_response": old_result.get('original_response', 
+                                                        'Перепроверено с обновленными медицинскими данными')
+                }
+                
+                cur.execute('''
+                    UPDATE saved_analyses 
+                    SET analysis_result = ?, warnings_count = ?
+                    WHERE id = ?
+                ''', (json.dumps(new_result), new_warnings_count, analysis['id']))
+                
+            except Exception as e:
+                print(f"Ошибка при пересмотре анализа {analysis['id']}: {e}")
+                continue
+        
+        conn.commit()
+        print(f"Пересмотрено {len(analyses)} анализов для пользователя {user_id}")
+        
+    except Exception as e:
+        print(f"Ошибка в reanalyze_all_saved_analyses: {e}")
+    finally:
+        conn.close()
 
 # Эндпоинт для удаления анализа
 @app.delete("/saved-analyses/{analysis_id}")
@@ -1030,9 +1324,9 @@ async def delete_saved_analysis(
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Получаем анализ с путем к изображению и информацией о ссылках
+    # Получаем анализ с путем к изображению
     cur.execute('''
-        SELECT id, user_id, image_path, original_analysis_id, ref_count 
+        SELECT id, user_id, image_path 
         FROM saved_analyses 
         WHERE id = ? AND user_id = ?
     ''', (analysis_id, user['id']))
@@ -1046,35 +1340,15 @@ async def delete_saved_analysis(
             detail="Анализ не найден"
         )
     
-    # Определяем ID оригинального анализа
-    original_analysis_id = analysis['original_analysis_id'] or analysis['id']
-    
-    # Удаляем текущий анализ
+    # Удаляем анализ из базы
     cur.execute('DELETE FROM saved_analyses WHERE id = ?', (analysis_id,))
     
-    # Уменьшаем счетчик ссылок для связанных анализов
-    cur.execute('''
-        UPDATE saved_analyses 
-        SET ref_count = ref_count - 1 
-        WHERE (id = ? OR original_analysis_id = ?) AND ref_count > 0
-    ''', (original_analysis_id, original_analysis_id))
-    
-    # Проверяем, остались ли другие анализы, ссылающиеся на это изображение
-    cur.execute('''
-        SELECT COUNT(*) as count FROM saved_analyses 
-        WHERE image_path = ? AND id != ?
-    ''', (analysis['image_path'], analysis_id))
-    
-    remaining_count = cur.fetchone()['count']
-    
-    # Если это последняя копия, удаляем изображение из Minio
-    if remaining_count == 0:
-        try:
-            minio_client.remove_object(MINIO_BUCKET_NAME, analysis['image_path'])
-            print(f"Изображение удалено из Minio: {analysis['image_path']}")
-        except Exception as e:
-            print(f"Ошибка при удалении изображения из Minio: {e}")
-            # Продолжаем даже если не удалось удалить изображение
+    # Удаляем изображение из Minio
+    try:
+        minio_client.remove_object(MINIO_BUCKET_NAME, analysis['image_path'])
+        print(f"Изображение удалено из Minio: {analysis['image_path']}")
+    except Exception as e:
+        print(f"Ошибка при удалении изображения из Minio: {e}")
     
     conn.commit()
     conn.close()

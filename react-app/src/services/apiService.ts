@@ -40,6 +40,21 @@ export interface MedicalDataResponse {
   updated_at: string;
 }
 
+export interface UpdateProfileData {
+  username?: string;
+  email?: string;
+}
+
+export interface ChangePasswordData {
+  old_password: string;
+  new_password: string;
+  confirm_password: string;
+}
+
+export interface DeleteAccountResponse {
+  message: string;
+}
+
 // Сохранение токена в localStorage
 export const saveToken = (token: string): void => {
   localStorage.setItem('auth_token', token);
@@ -74,8 +89,6 @@ export interface SavedAnalysis {
   ingredients_count: number;
   warnings_count: number;
   created_at: string;
-  original_analysis_id?: number;
-  is_reanalysis?: boolean;
 }
 
 export interface SavedAnalysesResponse {
@@ -202,6 +215,50 @@ export const getCurrentUser = async (): Promise<User> => {
     }
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.detail || 'Ошибка получения данных пользователя');
+  }
+
+  return response.json();
+};
+
+// Обновление профиля пользователя
+export const updateProfile = async (profileData: UpdateProfileData): Promise<User> => {
+  const response = await authFetch(`${API_BASE_URL}/update-profile`, {
+    method: 'POST',
+    body: JSON.stringify(profileData),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Ошибка обновления профиля');
+  }
+
+  return response.json();
+};
+
+// Смена пароля
+export const changePassword = async (passwordData: ChangePasswordData): Promise<{ message: string }> => {
+  const response = await authFetch(`${API_BASE_URL}/change-password`, {
+    method: 'POST',
+    body: JSON.stringify(passwordData),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Ошибка смены пароля');
+  }
+
+  return response.json();
+};
+
+// Удаление аккаунта
+export const deleteAccount = async (): Promise<DeleteAccountResponse> => {
+  const response = await authFetch(`${API_BASE_URL}/delete-account`, {
+    method: 'DELETE',
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Ошибка удаления аккаунта');
   }
 
   return response.json();

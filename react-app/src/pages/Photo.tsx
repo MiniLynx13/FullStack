@@ -756,14 +756,6 @@ function Photo() {
                           <Box>
                             <Heading size="md" color="blue.900" mb={2}>
                               Анализ от {formatDate(currentAnalysis.created_at)}
-                              {currentAnalysis.is_reanalysis && (
-                                <Text fontSize="sm" color="blue.700" mt={1}>
-                                  <Box as="span" display="inline-flex" alignItems="center" mr={1}>
-                                    <RefreshIcon />
-                                  </Box>
-                                  Перепроверено с обновленными данными
-                                </Text>
-                              )}
                             </Heading>
                             <Text color="blue.700" fontSize="sm">
                               Ингредиентов: {currentAnalysis.ingredients_count} | 

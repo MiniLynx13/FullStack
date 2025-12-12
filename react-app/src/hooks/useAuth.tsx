@@ -19,6 +19,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   isAuth: boolean;
   clearError: () => void;
+  updateUser: (updatedUser: User) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -43,6 +44,10 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const clearError = () => {
     console.log('Clearing error');
     setError(null);
+  };
+
+  const updateUser = (updatedUser: User) => {
+    setUser(updatedUser);
   };
 
   useEffect(() => {
@@ -125,6 +130,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     logout,
     isAuth: !!user,
     clearError,
+    updateUser,
   };
 
   console.log('AuthProvider state:', { user, loading, error });
