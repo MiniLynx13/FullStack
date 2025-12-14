@@ -773,7 +773,7 @@ async def analyze_image(
             # Используем asyncio.wait_for для установки таймаута
             response = await asyncio.wait_for(
                 call_ollama(image_base64),
-                timeout=480  # 8 минут (480 секунд)
+                timeout=430  # 7 минут
             )
         except asyncio.TimeoutError:
             raise HTTPException(

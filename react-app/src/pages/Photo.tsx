@@ -343,12 +343,6 @@ function Photo() {
 
     try {
       const result = await reanalyzeSavedAnalysis(analysisId);
-      
-      // Добавляем новый анализ в начало списка
-      const updatedAnalyses = [result, ...savedAnalyses];
-      setSavedAnalyses(updatedAnalyses);
-      setCurrentAnalysisIndex(0); // Переключаемся на новый анализ
-      
       // Показываем сообщение об успехе
       setSuccess('Анализ успешно перепроверен с текущими медицинскими данными!');
     } catch (err) {
