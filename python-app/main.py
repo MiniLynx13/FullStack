@@ -38,6 +38,10 @@ app.add_middleware(
 # Security
 security = HTTPBearer()
 
+# Настройки токенов
+ACCESS_TOKEN_EXPIRE_MINUTES = 15 # 15 минут
+REFRESH_TOKEN_EXPIRE_DAYS = 7     # 7 дней
+
 # Настройки Minio
 MINIO_ENDPOINT = "localhost:9000"
 MINIO_ACCESS_KEY = "grant_access"
@@ -97,6 +101,7 @@ class UserResponse(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str
     user: UserResponse
 
@@ -149,6 +154,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER REFERENCES users(id),
             token VARCHAR(255) UNIQUE NOT NULL,
+            token_type VARCHAR(10) NOT NULL DEFAULT 'access',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             expires_at TIMESTAMP NOT NULL
         )
@@ -210,29 +216,61 @@ def hash_password(password: str) -> str:
 def generate_token() -> str:
     return secrets.token_hex(32)
 
+def generate_token_pair_with_conn(conn, user_id: int):
+    cur = conn.cursor()
+    
+    access_token = generate_token()
+    refresh_token = generate_token()
+    
+    access_expires_at = datetime.now() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    refresh_expires_at = datetime.now() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    
+    # Сохраняем оба токена
+    cur.execute(
+        'INSERT INTO user_tokens (user_id, token, expires_at, token_type) VALUES (?, ?, ?, ?)',
+        (user_id, access_token, access_expires_at.isoformat(), 'access')
+    )
+    cur.execute(
+        'INSERT INTO user_tokens (user_id, token, expires_at, token_type) VALUES (?, ?, ?, ?)',
+        (user_id, refresh_token, refresh_expires_at.isoformat(), 'refresh')
+    )
+    
+    return {
+        'access_token': access_token,
+        'refresh_token': refresh_token,
+        'token_type': 'bearer'
+    }
+
 # Получение пользователя по токену
-def get_user_by_token(token: str):
+def get_user_by_token(token: str, token_type: str = 'access'):
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Сначала очищаем просроченные токены
-    cleanup_expired_tokens()
+    # Очищаем просроченные токены в этом же соединении
+    cur.execute('DELETE FROM user_tokens WHERE expires_at <= ?', 
+                (datetime.now().isoformat(),))
     
+    deleted_count = cur.rowcount
+    if deleted_count > 0:
+        print(f"Удалено {deleted_count} просроченных токенов")
+    
+    # Проверяем токен
     cur.execute('''
         SELECT u.id, u.username, u.email, u.created_at 
         FROM users u 
         JOIN user_tokens ut ON u.id = ut.user_id 
-        WHERE ut.token = ? AND ut.expires_at > ?
-    ''', (token, datetime.now().isoformat()))
+        WHERE ut.token = ? AND ut.expires_at > ? AND ut.token_type = ?
+    ''', (token, datetime.now().isoformat(), token_type))
     
     user = cur.fetchone()
+    conn.commit()
     conn.close()
     
     return user
 
 def require_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Проверяет, что пользователь авторизован (роль user)"""
-    user = get_user_by_token(credentials.credentials)
+    user = get_user_by_token(credentials.credentials, 'access')
     
     if not user:
         raise HTTPException(
@@ -245,7 +283,7 @@ def require_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
 def optional_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Позволяет получить пользователя, если он авторизован (для guest)"""
     if credentials:
-        user = get_user_by_token(credentials.credentials)
+        user = get_user_by_token(credentials.credentials, 'access')
         return user
     return None
 
@@ -256,6 +294,54 @@ async def startup_event():
     # Очищаем просроченные токены при запуске приложения
     cleaned_count = cleanup_expired_tokens()
     print(f"При запуске удалено {cleaned_count} просроченных токенов")
+
+# Обновление токенов по refresh токену
+@app.post("/refresh-token")
+async def refresh_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Обновляет пару токенов по refresh токену"""
+    refresh_token = credentials.credentials
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Проверяем refresh токен
+    cur.execute('''
+        SELECT u.id, u.username, u.email, u.created_at 
+        FROM users u 
+        JOIN user_tokens ut ON u.id = ut.user_id 
+        WHERE ut.token = ? AND ut.expires_at > ? AND ut.token_type = ?
+    ''', (refresh_token, datetime.now().isoformat(), 'refresh'))
+    
+    user = cur.fetchone()
+    
+    if not user:
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Недействительный или просроченный refresh токен"
+        )
+    
+    # Удаляем только использованный refresh токен, но сохраняем access токен
+    # чтобы не разлогинивать пользователя в других вкладках
+    cur.execute('DELETE FROM user_tokens WHERE token = ?', (refresh_token,))
+    
+    # Генерируем новую пару токенов
+    token_pair = generate_token_pair_with_conn(conn, user['id'])
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "access_token": token_pair['access_token'],
+        "refresh_token": token_pair['refresh_token'],
+        "token_type": token_pair['token_type'],
+        "user": {
+            "id": user['id'],
+            "username": user['username'],
+            "email": user['email'],
+            "created_at": user['created_at']
+        }
+    }
 
 # Регистрация пользователя
 @app.post("/register")
@@ -326,29 +412,26 @@ async def login(login_data: UserLogin):
             detail="Неверное имя пользователя или пароль"
         )
     
-    # Генерируем токен
-    token = generate_token()
-    expires_at = datetime.now() + timedelta(days=7)
+    # Удаляем старые токены пользователя
+    cur.execute('DELETE FROM user_tokens WHERE user_id = ?', (user['id'],))
     
-    # Сохраняем токен в базе
-    cur.execute(
-        'INSERT INTO user_tokens (user_id, token, expires_at) VALUES (?, ?, ?)',
-        (user['id'], token, expires_at.isoformat())
-    )
+    # Генерируем пару токенов (используем то же соединение)
+    token_pair = generate_token_pair_with_conn(conn, user['id'])
     
     conn.commit()
     conn.close()
     
-    return TokenResponse(
-        access_token=token,
-        token_type="bearer",
-        user=UserResponse(
-            id=user['id'],
-            username=user['username'],
-            email=user['email'],
-            created_at=user['created_at']
-        )
-    )
+    return {
+        "access_token": token_pair['access_token'],
+        "refresh_token": token_pair['refresh_token'],
+        "token_type": token_pair['token_type'],
+        "user": {
+            "id": user['id'],
+            "username": user['username'],
+            "email": user['email'],
+            "created_at": user['created_at']
+        }
+    }
 
 # Получение информации о текущем пользователе
 @app.get("/me")
@@ -636,7 +719,8 @@ async def logout(
     conn = get_db_connection()
     cur = conn.cursor()
     
-    cur.execute('DELETE FROM user_tokens WHERE token = ?', (credentials.credentials,))
+    # Удаляем все токены пользователя
+    cur.execute('DELETE FROM user_tokens WHERE user_id = ?', (user['id'],))
     conn.commit()
     conn.close()
     

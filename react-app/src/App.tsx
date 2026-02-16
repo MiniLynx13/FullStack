@@ -47,15 +47,8 @@ const AppContent: React.FC = () => {
           </style>
           <Routes>
             <Route path="/" element={<Home />} />
-            <Route path="/authorisation" element={
-              <ProtectedRoute requiredRole="guest">
-                <Authorisation />
-              </ProtectedRoute>} />
-            <Route path="/user" element={
-              <ProtectedRoute requiredRole="user">
-                <User />
-              </ProtectedRoute>
-            } />
+            <Route path="/authorisation" element={<Authorisation />} />
+            <Route path="/user" element={<User />} />
             <Route path="/photo" element={
               <ProtectedRoute> {/* Доступно всем */}
                 <Photo />

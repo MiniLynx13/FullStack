@@ -1,13 +1,15 @@
-import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
+import { useState, useEffect, createContext, useContext, ReactNode, useRef, useCallback } from 'react';
 import { 
   loginUser, 
   registerUser, 
   logoutUser, 
   getCurrentUser, 
   isAuthenticated,
+  refreshTokens,
+  removeTokens,
   User,
   LoginData,
-  RegisterData
+  RegisterData,
 } from '../services/apiService';
 
 interface AuthContextType {
@@ -20,7 +22,7 @@ interface AuthContextType {
   isAuth: boolean;
   clearError: () => void;
   updateUser: (updatedUser: User) => void;
-  role: 'user' | 'guest'; // Добавляем роль
+  role: 'user' | 'guest';
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -41,6 +43,11 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // Используем ref для отслеживания процесса обновления
+  const isRefreshing = useRef(false);
+  const initialLoadDone = useRef(false);
+  const refreshAttempts = useRef(0);
 
   const clearError = () => {
     console.log('Clearing error');
@@ -51,24 +58,93 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     setUser(updatedUser);
   };
 
+  // Функция для загрузки пользователя
+  const loadUser = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true);
+    
+    try {
+      const userData = await getCurrentUser();
+      setUser(userData);
+      refreshAttempts.current = 0; // Сбрасываем счетчик попыток
+      return true;
+    } catch (error) {
+      console.error('Error fetching user data:', error);
+      return false;
+    } finally {
+      if (showLoading) setLoading(false);
+    }
+  }, []);
+
+  // Обработчик события неавторизованного доступа
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      console.log('Unauthorized event received');
+      setUser(null);
+    };
+
+    window.addEventListener('unauthorized', handleUnauthorized);
+    
+    return () => {
+      window.removeEventListener('unauthorized', handleUnauthorized);
+    };
+  }, []);
+
+  // Инициализация авторизации
   useEffect(() => {
     const initAuth = async () => {
-      const token = isAuthenticated();
-      if (token) {
+      // Предотвращаем множественные вызовы
+      if (initialLoadDone.current) return;
+      
+      const authenticated = isAuthenticated();
+      console.log('Init auth, authenticated:', authenticated);
+      
+      if (!authenticated) {
+        setLoading(false);
+        initialLoadDone.current = true;
+        return;
+      }
+
+      // Пробуем загрузить пользователя
+      const success = await loadUser(true);
+      
+      if (!success) {
+        // Если не удалось загрузить, пробуем обновить токен
+        console.log('Failed to load user, attempting token refresh');
+        
+        // Предотвращаем множественные попытки refresh
+        if (isRefreshing.current) {
+          console.log('Refresh already in progress, skipping');
+          return;
+        }
+        
+        isRefreshing.current = true;
+        
         try {
-          const userData = await getCurrentUser();
-          setUser(userData);
-        } catch (error) {
-          console.error('Error fetching user data:', error);
-          setError('Ошибка загрузки данных пользователя');
-          localStorage.removeItem('auth_token');
+          const refreshed = await refreshTokens();
+          
+          if (refreshed && refreshed.user) {
+            console.log('Token refresh successful, setting user');
+            setUser(refreshed.user);
+          } else {
+            console.log('Token refresh failed, removing tokens');
+            removeTokens();
+            setUser(null);
+          }
+        } catch (refreshError) {
+          console.error('Error refreshing tokens:', refreshError);
+          removeTokens();
+          setUser(null);
+        } finally {
+          isRefreshing.current = false;
+          setLoading(false);
         }
       }
-      setLoading(false);
+      
+      initialLoadDone.current = true;
     };
 
     initAuth();
-  }, []);
+  }, [loadUser]);
 
   const login = async (loginData: LoginData) => {
     setLoading(true);
@@ -76,6 +152,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       const authData = await loginUser(loginData);
       setUser(authData.user);
       setError(null);
+      refreshAttempts.current = 0; // Сбрасываем счетчик
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Ошибка авторизации';
       console.log('Setting auth error in login:', errorMessage);
@@ -89,13 +166,14 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const register = async (registerData: RegisterData) => {
     setLoading(true);
     try {
-      const result = await registerUser(registerData);
+      await registerUser(registerData);
       const authData = await loginUser({
         username: registerData.username,
         password: registerData.password
       });
       setUser(authData.user);
       setError(null);
+      refreshAttempts.current = 0; // Сбрасываем счетчик
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Ошибка регистрации';
       console.log('Setting auth error in register:', errorMessage);
@@ -112,6 +190,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     try {
       await logoutUser();
       setUser(null);
+      refreshAttempts.current = 0; // Сбрасываем счетчик
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Ошибка выхода';
       setError(errorMessage);
@@ -121,7 +200,6 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     }
   };
 
-  // Роль: user если есть пользователь, иначе guest
   const role = user ? 'user' : 'guest';
 
   const value: AuthContextType = {

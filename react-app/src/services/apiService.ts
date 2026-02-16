@@ -1,5 +1,8 @@
 const API_BASE_URL = 'http://localhost:8000';
 
+let isRefreshing = false;
+let refreshPromise: Promise<AuthResponse | null> | null = null;
+
 export interface PhraseResponse {
   phrase: string;
 }
@@ -13,6 +16,7 @@ export interface User {
 
 export interface AuthResponse {
   access_token: string;
+  refresh_token: string;
   token_type: string;
   user: User;
 }
@@ -55,24 +59,96 @@ export interface DeleteAccountResponse {
   message: string;
 }
 
-// Сохранение токена в localStorage
-export const saveToken = (token: string): void => {
-  localStorage.setItem('auth_token', token);
+// Сохранение refresh токена
+export const saveRefreshToken = (token: string): void => {
+  localStorage.setItem('refresh_token', token);
 };
 
-// Получение токена из localStorage
+// Получение refresh токена
+export const getRefreshToken = (): string | null => {
+  return localStorage.getItem('refresh_token');
+};
+
+// Удаление refresh токена
+export const removeRefreshToken = (): void => {
+  localStorage.removeItem('refresh_token');
+};
+
+// Сохранение токенов в localStorage
+export const saveTokens = (accessToken: string, refreshToken: string): void => {
+  localStorage.setItem('auth_token', accessToken);
+  localStorage.setItem('refresh_token', refreshToken);
+};
+
+// Удаления всех токенов
+export const removeTokens = (): void => {
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('refresh_token');
+};
+
+// Получение access токена из localStorage
 export const getToken = (): string | null => {
   return localStorage.getItem('auth_token');
 };
 
-// Удаление токена
+// Удаление access токена
 export const removeToken = (): void => {
   localStorage.removeItem('auth_token');
 };
 
+// Обновление токенов
+export const refreshTokens = async (): Promise<AuthResponse | null> => {
+  const refreshToken = getRefreshToken();
+  
+  if (!refreshToken) {
+    return null;
+  }
+
+  // Если уже идет обновление, возвращаем существующий промис
+  if (isRefreshing && refreshPromise) {
+    console.log('Token refresh already in progress, waiting...');
+    return refreshPromise;
+  }
+  
+  isRefreshing = true;
+  
+  refreshPromise = (async () => {
+    try {
+      console.log('Attempting to refresh tokens...');
+      const response = await fetch(`${API_BASE_URL}/refresh-token`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${refreshToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        console.log('Refresh token response not OK:', response.status);
+        removeTokens();
+        return null;
+      }
+      
+      const authData = await response.json();
+      console.log('Tokens refreshed successfully');
+      saveTokens(authData.access_token, authData.refresh_token);
+      return authData;
+    } catch (error) {
+      console.error('Error refreshing tokens:', error);
+      removeTokens();
+      return null;
+    } finally {
+      isRefreshing = false;
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+};
+
 // Проверка авторизации
 export const isAuthenticated = (): boolean => {
-  return !!getToken();
+  return !!getToken() && !!getRefreshToken();
 };
 
 export interface SaveAnalysisRequest {
@@ -97,7 +173,7 @@ export interface SavedAnalysesResponse {
 
 // Базовый запрос с авторизацией
 const authFetch = async (url: string, options: RequestInit = {}) => {
-  const token = getToken();
+  let token = getToken();
   
   // Создаем заголовки с правильным типом
   const headers: Record<string, string> = {};
@@ -117,10 +193,47 @@ const authFetch = async (url: string, options: RequestInit = {}) => {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(url, {
+  let response = await fetch(url, {
     ...options,
     headers,
   });
+
+  // Если получили 401, пробуем обновить токен
+  if (response.status === 401) {
+    console.log('Token expired, attempting to refresh...');
+    
+    const newAuthData = await refreshTokens();
+    
+    if (newAuthData) {
+      console.log('Token refreshed successfully, retrying request');
+      // Обновляем токен в заголовках
+      headers['Authorization'] = `Bearer ${newAuthData.access_token}`;
+      
+      // Повторяем запрос с новым токеном
+      response = await fetch(url, {
+        ...options,
+        headers,
+      });
+      
+      console.log('Retry response status:', response.status);
+      
+      // Если запрос успешен, возвращаем его
+      if (response.ok) {
+        return response;
+      }
+      
+      // Если снова 401, значит что-то не так с новым токеном
+      if (response.status === 401) {
+        console.log('Retry also failed with 401, logging out');
+        removeTokens();
+        window.dispatchEvent(new Event('unauthorized'));
+      }
+    } else {
+      console.log('Token refresh failed, logging out');
+      removeTokens();
+      window.dispatchEvent(new Event('unauthorized'));
+    }
+  }
 
   return response;
 };
@@ -189,7 +302,14 @@ export const loginUser = async (loginData: LoginData): Promise<AuthResponse> => 
   await handleError(response);
 
   const authData = await response.json();
-  saveToken(authData.access_token);
+  // Проверяем наличие обоих токенов в ответе
+  if (authData.access_token && authData.refresh_token) {
+    saveTokens(authData.access_token, authData.refresh_token);
+  } else {
+    // Если ответ не содержит нужные поля, возможно сервер вернул старый формат
+    console.error('Unexpected auth response format:', authData);
+    throw new Error('Неверный формат ответа от сервера');
+  }
   return authData;
 };
 
@@ -197,12 +317,16 @@ export const loginUser = async (loginData: LoginData): Promise<AuthResponse> => 
 export const logoutUser = async (): Promise<void> => {
   const token = getToken();
   if (token) {
-    const response = await authFetch(`${API_BASE_URL}/logout`, {
-      method: 'POST',
-    });
-    await handleError(response);
+    try {
+      const response = await authFetch(`${API_BASE_URL}/logout`, {
+        method: 'POST',
+      });
+      await handleError(response);
+    } catch (error) {
+      console.error('Error during logout:', error);
+    }
   }
-  removeToken();
+  removeTokens();
 };
 
 // Получение информации о текущем пользователе
@@ -211,7 +335,7 @@ export const getCurrentUser = async (): Promise<User> => {
 
   if (!response.ok) {
     if (response.status === 401) {
-      removeToken();
+      removeTokens();
     }
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.detail || 'Ошибка получения данных пользователя');
