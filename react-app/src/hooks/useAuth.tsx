@@ -20,6 +20,7 @@ interface AuthContextType {
   isAuth: boolean;
   clearError: () => void;
   updateUser: (updatedUser: User) => void;
+  role: 'user' | 'guest'; // Добавляем роль
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -74,7 +75,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     try {
       const authData = await loginUser(loginData);
       setUser(authData.user);
-      setError(null); // Очищаем ошибку только при успехе
+      setError(null);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Ошибка авторизации';
       console.log('Setting auth error in login:', errorMessage);
@@ -89,13 +90,12 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     setLoading(true);
     try {
       const result = await registerUser(registerData);
-      // После регистрации автоматически логиним пользователя
       const authData = await loginUser({
         username: registerData.username,
         password: registerData.password
       });
       setUser(authData.user);
-      setError(null); // Очищаем ошибку только при успехе
+      setError(null);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Ошибка регистрации';
       console.log('Setting auth error in register:', errorMessage);
@@ -108,7 +108,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
   const logout = async () => {
     setLoading(true);
-    setError(null); // При выходе очищаем ошибки
+    setError(null);
     try {
       await logoutUser();
       setUser(null);
@@ -121,6 +121,9 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     }
   };
 
+  // Роль: user если есть пользователь, иначе guest
+  const role = user ? 'user' : 'guest';
+
   const value: AuthContextType = {
     user,
     loading,
@@ -129,11 +132,12 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     register,
     logout,
     isAuth: !!user,
+    role,
     clearError,
     updateUser,
   };
 
-  console.log('AuthProvider state:', { user, loading, error });
+  console.log('AuthProvider state:', { user, loading, error, role });
 
   return (
     <AuthContext.Provider value={value}>

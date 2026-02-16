@@ -230,6 +230,25 @@ def get_user_by_token(token: str):
     
     return user
 
+def require_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Проверяет, что пользователь авторизован (роль user)"""
+    user = get_user_by_token(credentials.credentials)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Требуется авторизация"
+        )
+    
+    return user
+
+def optional_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Позволяет получить пользователя, если он авторизован (для guest)"""
+    if credentials:
+        user = get_user_by_token(credentials.credentials)
+        return user
+    return None
+
 @app.on_event("startup")
 async def startup_event():
     init_db()
@@ -333,15 +352,7 @@ async def login(login_data: UserLogin):
 
 # Получение информации о текущем пользователе
 @app.get("/me")
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    user = get_user_by_token(credentials.credentials)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверный или просроченный токен"
-        )
-    
+async def get_current_user(user = Depends(require_auth)):
     return UserResponse(
         id=user['id'],
         username=user['username'],
@@ -353,16 +364,8 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 @app.post("/update-profile")
 async def update_profile(
     profile_data: UpdateProfileData,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-):
-    user = get_user_by_token(credentials.credentials)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверный или просроченный токен"
-        )
-    
+    user = Depends(require_auth)
+):  
     # Проверяем, что есть хотя бы одно поле для обновления
     if profile_data.username is None and profile_data.email is None:
         raise HTTPException(
@@ -451,16 +454,8 @@ async def update_profile(
 @app.post("/change-password")
 async def change_password(
     password_data: ChangePasswordData,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    user = Depends(require_auth)
 ):
-    user = get_user_by_token(credentials.credentials)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверный или просроченный токен"
-        )
-    
     # Проверяем совпадение паролей
     if password_data.new_password != password_data.confirm_password:
         raise HTTPException(
@@ -506,15 +501,7 @@ async def change_password(
 
 # Удаление аккаунта
 @app.delete("/delete-account")
-async def delete_account(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    user = get_user_by_token(credentials.credentials)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверный или просроченный токен"
-        )
-    
+async def delete_account(user = Depends(require_auth)):
     conn = get_db_connection()
     cur = conn.cursor()
     
@@ -556,15 +543,7 @@ async def delete_account(credentials: HTTPAuthorizationCredentials = Depends(sec
 
 # Получение медицинских данных пользователя
 @app.get("/medical-data")
-async def get_medical_data(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    user = get_user_by_token(credentials.credentials)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверный или просроченный токен"
-        )
-    
+async def get_medical_data(user = Depends(require_auth)):
     conn = get_db_connection()
     cur = conn.cursor()
     
@@ -595,17 +574,9 @@ async def get_medical_data(credentials: HTTPAuthorizationCredentials = Depends(s
 @app.post("/medical-data")
 async def save_medical_data(
     medical_data: MedicalData,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    user = Depends(require_auth),
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
-    user = get_user_by_token(credentials.credentials)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверный или просроченный токен"
-        )
-    
     conn = get_db_connection()
     cur = conn.cursor()
     
@@ -658,7 +629,10 @@ async def save_medical_data(
 
 # Выход из системы
 @app.post("/logout")
-async def logout(credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def logout(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    user = Depends(require_auth)
+):
     conn = get_db_connection()
     cur = conn.cursor()
     
@@ -677,16 +651,8 @@ async def cleanup_tokens():
 @app.post("/analyze-image")
 async def analyze_image(
     image: UploadFile = File(...),
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    user = Depends(require_auth)
 ):
-    user = get_user_by_token(credentials.credentials)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверный или просроченный токен"
-        )
-    
     # Получаем медицинские данные пользователя
     conn = get_db_connection()
     cur = conn.cursor()
@@ -892,20 +858,12 @@ async def analyze_image(
 # Сохранение анализа изображения
 @app.post("/save-analysis")
 async def save_analysis(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    user = Depends(require_auth),
     image: UploadFile = File(...),
     analysis_result: str = Form(...),
     ingredients_count: str = Form(...),
     warnings_count: str = Form(...)
 ):
-    user = get_user_by_token(credentials.credentials)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверный или просроченный токен"
-        )
-    
     try:
         # Парсим analysis_result из JSON строки
         analysis_result_dict = json.loads(analysis_result)
@@ -1009,15 +967,7 @@ async def save_analysis(
 
 # Получение сохраненных анализов пользователя
 @app.get("/saved-analyses")
-async def get_saved_analyses(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    user = get_user_by_token(credentials.credentials)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверный или просроченный токен"
-        )
-    
+async def get_saved_analyses(user = Depends(require_auth)):
     conn = get_db_connection()
     cur = conn.cursor()
     
@@ -1061,16 +1011,8 @@ async def get_saved_analyses(credentials: HTTPAuthorizationCredentials = Depends
 @app.post("/reanalyze-analysis/{analysis_id}")
 async def reanalyze_saved_analysis(
     analysis_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    user = Depends(require_auth)
 ):
-    user = get_user_by_token(credentials.credentials)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверный или просроченный токен"
-        )
-    
     conn = get_db_connection()
     cur = conn.cursor()
     
@@ -1311,16 +1253,8 @@ async def reanalyze_all_saved_analyses(user_id: int):
 @app.delete("/saved-analyses/{analysis_id}")
 async def delete_saved_analysis(
     analysis_id: int,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    user = Depends(require_auth)
 ):
-    user = get_user_by_token(credentials.credentials)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверный или просроченный токен"
-        )
-    
     conn = get_db_connection()
     cur = conn.cursor()
     

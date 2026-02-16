@@ -4,7 +4,7 @@ import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 
 const Header: React.FC = () => {
-  const { isAuth, user, logout } = useAuth();
+  const { role, user, logout } = useAuth();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -45,7 +45,7 @@ const Header: React.FC = () => {
 
         {/* Навигация */}
         <Flex gap={8} align="center">
-          {!isAuth ? (
+          {role === 'guest' ? (
             <Flex gap={2} align="center">
               <RouterLink to="/authorisation">
                 <Text
