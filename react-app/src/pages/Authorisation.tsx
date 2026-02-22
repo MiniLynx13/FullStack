@@ -7,7 +7,6 @@ function Authorisation() {
   const { login, register, loading: authLoading, error: authError, clearError, isAuth } = useAuth();
   const navigate = useNavigate();
   const { search, pathname } = useLocation();
-  const searchParams = new URLSearchParams(search);
   
   const [isLogin, setIsLogin] = useState(true);
   const [formData, setFormData] = useState({
@@ -52,13 +51,14 @@ function Authorisation() {
   }, [isLogin]);
 
   useEffect(() => {
+    const searchParams = new URLSearchParams(search);
     const tab = searchParams.get('tab');
     if (tab === 'register') {
       setIsLogin(false);
     } else {
       setIsLogin(true);
     }
-  }, [search, searchParams]);
+  }, [search]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({

@@ -19,6 +19,7 @@ from minio import Minio
 from minio.error import S3Error
 import uuid
 import asyncio
+from enum import Enum
 
 app = FastAPI()
 
@@ -93,10 +94,20 @@ class ChangePasswordData(BaseModel):
     new_password: str
     confirm_password: str
 
+class UserRole(str, Enum):
+    USER = "user"
+    ADMIN = "admin"
+    BANNED = "banned"
+
+class UpdateUserRole(BaseModel):
+    user_id: int
+    new_role: str
+
 class UserResponse(BaseModel):
     id: int
     username: str
     email: str
+    role: str
     created_at: str
 
 class TokenResponse(BaseModel):
@@ -144,6 +155,7 @@ def init_db():
             username VARCHAR(50) UNIQUE NOT NULL,
             email VARCHAR(100) UNIQUE NOT NULL,
             password_hash VARCHAR(255) NOT NULL,
+            role VARCHAR(20) DEFAULT 'user',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -186,6 +198,7 @@ def init_db():
         )
     ''')
 
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_original_analysis ON saved_analyses(original_analysis_id)')
     
     conn.commit()
@@ -256,7 +269,7 @@ def get_user_by_token(token: str, token_type: str = 'access'):
     
     # Проверяем токен
     cur.execute('''
-        SELECT u.id, u.username, u.email, u.created_at 
+        SELECT u.id, u.username, u.email, u.role, u.created_at 
         FROM users u 
         JOIN user_tokens ut ON u.id = ut.user_id 
         WHERE ut.token = ? AND ut.expires_at > ? AND ut.token_type = ?
@@ -269,7 +282,7 @@ def get_user_by_token(token: str, token_type: str = 'access'):
     return user
 
 def require_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Проверяет, что пользователь авторизован (роль user)"""
+    """Проверяет, что пользователь авторизован"""
     user = get_user_by_token(credentials.credentials, 'access')
     
     if not user:
@@ -280,12 +293,41 @@ def require_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
     
     return user
 
-def optional_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Позволяет получить пользователя, если он авторизован (для guest)"""
-    if credentials:
-        user = get_user_by_token(credentials.credentials, 'access')
-        return user
-    return None
+def require_admin(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Проверяет, что пользователь является администратором"""
+    user = get_user_by_token(credentials.credentials, 'access')
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Требуется авторизация"
+        )
+    
+    if user['role'] != 'admin':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Доступ запрещен. Требуются права администратора"
+        )
+    
+    return user
+
+def require_not_banned(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Проверяет, что пользователь не забанен"""
+    user = get_user_by_token(credentials.credentials, 'access')
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Требуется авторизация"
+        )
+    
+    if user['role'] == 'banned':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Ваш аккаунт заблокирован. Обратитесь к администратору"
+        )
+    
+    return user
 
 @app.on_event("startup")
 async def startup_event():
@@ -372,7 +414,7 @@ async def register(user_data: UserRegister):
     user_id = cur.lastrowid
     
     cur.execute(
-        'SELECT id, username, email, created_at FROM users WHERE id = ?',
+        'SELECT id, username, email, role, created_at FROM users WHERE id = ?',
         (user_id,)
     )
     
@@ -386,6 +428,7 @@ async def register(user_data: UserRegister):
             "id": new_user['id'],
             "username": new_user['username'],
             "email": new_user['email'],
+            "role": new_user['role'],
             "created_at": new_user['created_at']
         }
     }
@@ -399,7 +442,7 @@ async def login(login_data: UserLogin):
     # Ищем пользователя
     password_hash = hash_password(login_data.password)
     cur.execute(
-        'SELECT id, username, email, created_at FROM users WHERE username = ? AND password_hash = ?',
+        'SELECT id, username, email, role, created_at FROM users WHERE username = ? AND password_hash = ?',
         (login_data.username, password_hash)
     )
     
@@ -415,7 +458,7 @@ async def login(login_data: UserLogin):
     # Удаляем старые токены пользователя
     cur.execute('DELETE FROM user_tokens WHERE user_id = ?', (user['id'],))
     
-    # Генерируем пару токенов (используем то же соединение)
+    # Генерируем пару токенов
     token_pair = generate_token_pair_with_conn(conn, user['id'])
     
     conn.commit()
@@ -429,6 +472,7 @@ async def login(login_data: UserLogin):
             "id": user['id'],
             "username": user['username'],
             "email": user['email'],
+            "role": user['role'],
             "created_at": user['created_at']
         }
     }
@@ -440,6 +484,7 @@ async def get_current_user(user = Depends(require_auth)):
         id=user['id'],
         username=user['username'],
         email=user['email'],
+        role=user['role'],
         created_at=user['created_at']
     )
 
@@ -447,7 +492,7 @@ async def get_current_user(user = Depends(require_auth)):
 @app.post("/update-profile")
 async def update_profile(
     profile_data: UpdateProfileData,
-    user = Depends(require_auth)
+    user = Depends(require_not_banned)
 ):  
     # Проверяем, что есть хотя бы одно поле для обновления
     if profile_data.username is None and profile_data.email is None:
@@ -537,7 +582,7 @@ async def update_profile(
 @app.post("/change-password")
 async def change_password(
     password_data: ChangePasswordData,
-    user = Depends(require_auth)
+    user = Depends(require_not_banned)
 ):
     # Проверяем совпадение паролей
     if password_data.new_password != password_data.confirm_password:
@@ -584,7 +629,7 @@ async def change_password(
 
 # Удаление аккаунта
 @app.delete("/delete-account")
-async def delete_account(user = Depends(require_auth)):
+async def delete_account(user = Depends(require_not_banned)):
     conn = get_db_connection()
     cur = conn.cursor()
     
@@ -626,7 +671,7 @@ async def delete_account(user = Depends(require_auth)):
 
 # Получение медицинских данных пользователя
 @app.get("/medical-data")
-async def get_medical_data(user = Depends(require_auth)):
+async def get_medical_data(user = Depends(require_not_banned)):
     conn = get_db_connection()
     cur = conn.cursor()
     
@@ -657,7 +702,7 @@ async def get_medical_data(user = Depends(require_auth)):
 @app.post("/medical-data")
 async def save_medical_data(
     medical_data: MedicalData,
-    user = Depends(require_auth),
+    user = Depends(require_not_banned),
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     conn = get_db_connection()
@@ -735,7 +780,7 @@ async def cleanup_tokens():
 @app.post("/analyze-image")
 async def analyze_image(
     image: UploadFile = File(...),
-    user = Depends(require_auth)
+    user = Depends(require_not_banned)
 ):
     # Получаем медицинские данные пользователя
     conn = get_db_connection()
@@ -942,7 +987,7 @@ async def analyze_image(
 # Сохранение анализа изображения
 @app.post("/save-analysis")
 async def save_analysis(
-    user = Depends(require_auth),
+    user = Depends(require_not_banned),
     image: UploadFile = File(...),
     analysis_result: str = Form(...),
     ingredients_count: str = Form(...),
@@ -1051,7 +1096,7 @@ async def save_analysis(
 
 # Получение сохраненных анализов пользователя
 @app.get("/saved-analyses")
-async def get_saved_analyses(user = Depends(require_auth)):
+async def get_saved_analyses(user = Depends(require_not_banned)):
     conn = get_db_connection()
     cur = conn.cursor()
     
@@ -1095,7 +1140,7 @@ async def get_saved_analyses(user = Depends(require_auth)):
 @app.post("/reanalyze-analysis/{analysis_id}")
 async def reanalyze_saved_analysis(
     analysis_id: int,
-    user = Depends(require_auth)
+    user = Depends(require_not_banned)
 ):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -1337,7 +1382,7 @@ async def reanalyze_all_saved_analyses(user_id: int):
 @app.delete("/saved-analyses/{analysis_id}")
 async def delete_saved_analysis(
     analysis_id: int,
-    user = Depends(require_auth)
+    user = Depends(require_not_banned)
 ):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -1372,6 +1417,131 @@ async def delete_saved_analysis(
     conn.close()
     
     return {"message": "Анализ успешно удален"}
+
+# Получение списка всех пользователей (только для админа)
+@app.get("/admin/users")
+async def get_all_users(admin = Depends(require_admin)):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    cur.execute('''
+        SELECT id, username, email, role, created_at 
+        FROM users 
+        ORDER BY created_at DESC
+    ''')
+    
+    users = cur.fetchall()
+    conn.close()
+    
+    return {
+        "users": [
+            {
+                "id": user['id'],
+                "username": user['username'],
+                "email": user['email'],
+                "role": user['role'],
+                "created_at": user['created_at']
+            }
+            for user in users
+        ]
+    }
+
+# Обновление роли пользователя (только для админа)
+@app.post("/admin/update-user-role")
+async def update_user_role(
+    role_data: UpdateUserRole,
+    admin = Depends(require_admin)
+):
+    # Запрещаем админу менять свою собственную роль
+    if role_data.user_id == admin['id']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Нельзя изменить собственную роль"
+        )
+    
+    # Проверяем валидность новой роли
+    if role_data.new_role not in [role.value for role in UserRole]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Недопустимая роль. Допустимые роли: {', '.join([role.value for role in UserRole])}"
+        )
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Проверяем существование пользователя
+    cur.execute('SELECT id, username FROM users WHERE id = ?', (role_data.user_id,))
+    target_user = cur.fetchone()
+    
+    if not target_user:
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Пользователь не найден"
+        )
+    
+    # Обновляем роль
+    cur.execute(
+        'UPDATE users SET role = ? WHERE id = ?',
+        (role_data.new_role, role_data.user_id)
+    )
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "message": f"Роль пользователя {target_user['username']} изменена на {role_data.new_role}",
+        "user_id": role_data.user_id,
+        "new_role": role_data.new_role
+    }
+
+# Удаление пользователя (только для админа)
+@app.delete("/admin/users/{user_id}")
+async def delete_user_by_admin(
+    user_id: int,
+    admin = Depends(require_admin)
+):
+    # Запрещаем админу удалять самого себя
+    if user_id == admin['id']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Нельзя удалить собственный аккаунт"
+        )
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Проверяем существование пользователя
+    cur.execute('SELECT username FROM users WHERE id = ?', (user_id,))
+    target_user = cur.fetchone()
+    
+    if not target_user:
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Пользователь не найден"
+        )
+    
+    # Удаляем изображения пользователя из Minio
+    cur.execute('SELECT image_path FROM saved_analyses WHERE user_id = ?', (user_id,))
+    saved_images = cur.fetchall()
+    
+    for img in saved_images:
+        try:
+            minio_client.remove_object(MINIO_BUCKET_NAME, img['image_path'])
+        except Exception as e:
+            print(f"Ошибка при удалении изображения из Minio: {e}")
+    
+    # Удаляем все данные пользователя
+    cur.execute('DELETE FROM saved_analyses WHERE user_id = ?', (user_id,))
+    cur.execute('DELETE FROM user_medical_data WHERE user_id = ?', (user_id,))
+    cur.execute('DELETE FROM user_tokens WHERE user_id = ?', (user_id,))
+    cur.execute('DELETE FROM users WHERE id = ?', (user_id,))
+    
+    conn.commit()
+    conn.close()
+    
+    return {"message": f"Пользователь {target_user['username']} успешно удален"}
 
 @app.get("/")
 async def root():

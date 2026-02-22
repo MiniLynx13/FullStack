@@ -1,6 +1,6 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { AuthProvider } from './hooks/useAuth';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from './hooks/useAuth';
 import { Box, Flex } from '@chakra-ui/react';
 import Header from './components/Header';
 import Footer from './components/Footer';
@@ -8,8 +8,50 @@ import Home from './pages/Home';
 import Authorisation from './pages/Authorisation';
 import User from './pages/User';
 import Photo from './pages/Photo';
+import AdminPanel from './pages/AdminPanel';
+import Banned from './pages/Banned';
 import Error404 from './pages/Error404';
-import { ProtectedRoute } from './components/ProtectedRoute';
+
+// Защищенный маршрут для незабаненных пользователей
+const UnbannedRoute = ({ children }: { children: React.ReactNode }) => {
+  const { isBanned } = useAuth();
+  
+  if (isBanned) {
+    return <Navigate to="/banned" replace />;
+  }
+
+  return <>{children}</>;
+};
+
+// Защищенный маршрут для забаненных пользователей
+const BannedRoute = ({ children }: { children: React.ReactNode }) => {
+  const { isBanned } = useAuth();
+  
+  if (!isBanned) {
+    return <Navigate to="/" replace />;
+  }
+
+  return <>{children}</>;
+};
+
+// Защищенный маршрут для администраторов
+const AdminRoute = ({ children }: { children: React.ReactNode }) => {
+  const { isAuth, isAdmin, isBanned } = useAuth();
+  
+  if (!isAuth) {
+    return <Navigate to="/authorisation" replace />;
+  }
+
+  if (isBanned || !isAdmin) {
+    return <Navigate to="/banned" replace />;
+  }
+
+  if (!isAdmin) {
+    return <Navigate to="/" replace />;
+  }
+
+  return <>{children}</>;
+};
 
 const AppContent: React.FC = () => {
   return (
@@ -46,14 +88,36 @@ const AppContent: React.FC = () => {
             `}
           </style>
           <Routes>
+            {/* Публичные маршруты */}
             <Route path="/" element={<Home />} />
             <Route path="/authorisation" element={<Authorisation />} />
-            <Route path="/user" element={<User />} />
-            <Route path="/photo" element={
-              <ProtectedRoute> {/* Доступно всем */}
-                <Photo />
-              </ProtectedRoute>
+            
+            {/* Защищенные маршруты */}
+            <Route path="/user" element={
+              <UnbannedRoute>
+                <User />
+              </UnbannedRoute>
             } />
+            <Route path="/photo" element={
+              <UnbannedRoute>
+                <Photo />
+              </UnbannedRoute>
+            } />
+
+            <Route path="/banned" element={
+              <BannedRoute>
+                <Banned />
+              </BannedRoute>
+            } />
+            
+            {/* Админ-маршруты */}
+            <Route path="/admin" element={
+              <AdminRoute>
+                <AdminPanel />
+              </AdminRoute>
+            } />
+            
+            {/* 404 */}
             <Route path="*" element={<Error404 />} />
           </Routes>
         </Box>

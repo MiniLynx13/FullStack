@@ -342,7 +342,7 @@ function Photo() {
     setSuccess(null);
 
     try {
-      const result = await reanalyzeSavedAnalysis(analysisId);
+      await reanalyzeSavedAnalysis(analysisId);
       // Показываем сообщение об успехе
       setSuccess('Анализ успешно перепроверен с текущими медицинскими данными!');
     } catch (err) {

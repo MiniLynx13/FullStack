@@ -11,6 +11,7 @@ export interface User {
   id: number;
   username: string;
   email: string;
+  role: string;
   created_at: string;
 }
 
@@ -57,6 +58,17 @@ export interface ChangePasswordData {
 
 export interface DeleteAccountResponse {
   message: string;
+}
+
+export type UserRole = 'user' | 'admin' | 'banned';
+
+export interface UpdateUserRoleData {
+  user_id: number;
+  new_role: string;
+}
+
+export interface AdminUsersResponse {
+  users: User[];
 }
 
 // Сохранение refresh токена
@@ -594,6 +606,65 @@ export const reanalyzeSavedAnalysis = async (analysisId: number): Promise<SavedA
     }
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.detail || 'Ошибка перепроверки анализа');
+  }
+
+  return response.json();
+};
+
+// Получение всех пользователей (только для админа)
+export const getAdminUsers = async (): Promise<AdminUsersResponse> => {
+  const response = await authFetch(`${API_BASE_URL}/admin/users`);
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      removeTokens();
+    }
+    if (response.status === 403) {
+      throw new Error('Доступ запрещен. Требуются права администратора');
+    }
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Ошибка получения списка пользователей');
+  }
+
+  return response.json();
+};
+
+// Обновление роли пользователя (только для админа)
+export const updateUserRole = async (data: UpdateUserRoleData): Promise<{ message: string; user_id: number; new_role: string }> => {
+  const response = await authFetch(`${API_BASE_URL}/admin/update-user-role`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      removeTokens();
+    }
+    if (response.status === 403) {
+      throw new Error('Доступ запрещен. Требуются права администратора');
+    }
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Ошибка обновления роли');
+  }
+
+  return response.json();
+};
+
+// Удаление пользователя администратором
+export const adminDeleteUser = async (userId: number): Promise<{ message: string }> => {
+  const response = await authFetch(`${API_BASE_URL}/admin/users/${userId}`, {
+    method: 'DELETE',
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      removeTokens();
+    }
+    if (response.status === 403) {
+      throw new Error('Доступ запрещен. Требуются права администратора');
+    }
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Ошибка удаления пользователя');
   }
 
   return response.json();

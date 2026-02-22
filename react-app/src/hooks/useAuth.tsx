@@ -20,9 +20,10 @@ interface AuthContextType {
   register: (data: RegisterData) => Promise<void>;
   logout: () => Promise<void>;
   isAuth: boolean;
+  isAdmin: boolean;
+  isBanned: boolean;
   clearError: () => void;
   updateUser: (updatedUser: User) => void;
-  role: 'user' | 'guest';
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -43,6 +44,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const isAdmin = user?.role === 'admin';
+  const isBanned = user?.role === 'banned';
   
   // Используем ref для отслеживания процесса обновления
   const isRefreshing = useRef(false);
@@ -92,7 +95,6 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   // Инициализация авторизации
   useEffect(() => {
     const initAuth = async () => {
-      // Предотвращаем множественные вызовы
       if (initialLoadDone.current) return;
       
       const authenticated = isAuthenticated();
@@ -104,14 +106,12 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         return;
       }
 
-      // Пробуем загрузить пользователя
+      // Пробуем загрузить пользователя с текущим access токеном
       const success = await loadUser(true);
       
       if (!success) {
-        // Если не удалось загрузить, пробуем обновить токен
         console.log('Failed to load user, attempting token refresh');
         
-        // Предотвращаем множественные попытки refresh
         if (isRefreshing.current) {
           console.log('Refresh already in progress, skipping');
           return;
@@ -200,8 +200,6 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     }
   };
 
-  const role = user ? 'user' : 'guest';
-
   const value: AuthContextType = {
     user,
     loading,
@@ -210,12 +208,13 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     register,
     logout,
     isAuth: !!user,
-    role,
+    isAdmin,
+    isBanned,
     clearError,
     updateUser,
   };
 
-  console.log('AuthProvider state:', { user, loading, error, role });
+  console.log('AuthProvider state:', { user, loading, error });
 
   return (
     <AuthContext.Provider value={value}>

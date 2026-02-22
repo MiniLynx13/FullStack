@@ -4,7 +4,7 @@ import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 
 const Header: React.FC = () => {
-  const { role, user, logout } = useAuth();
+  const { isAuth, isAdmin, user, logout } = useAuth();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -45,7 +45,7 @@ const Header: React.FC = () => {
 
         {/* Навигация */}
         <Flex gap={8} align="center">
-          {role === 'guest' ? (
+          {!isAuth ? (
             <Flex gap={2} align="center">
               <RouterLink to="/authorisation">
                 <Text
@@ -60,9 +60,7 @@ const Header: React.FC = () => {
                 </Text>
               </RouterLink>
               <Text color="blue.400">/</Text>
-              <RouterLink 
-                to="/authorisation?tab=register"
-              >
+              <RouterLink to="/authorisation?tab=register">
                 <Text
                   color="blue.800"
                   fontSize="lg"
@@ -77,6 +75,22 @@ const Header: React.FC = () => {
             </Flex>
           ) : (
             <Flex gap={8} align="center">
+              {/* Ссылка на админ-панель (только для администратора) */}
+              {isAdmin && (
+                <RouterLink to="/admin">
+                  <Text
+                    color="purple.600"
+                    fontSize="lg"
+                    fontWeight="bold"
+                    _hover={{ color: 'purple.800' }}
+                    transition="color 0.2s"
+                    cursor="pointer"
+                  >
+                    Админ-панель
+                  </Text>
+                </RouterLink>
+              )}
+
               <RouterLink to="/photo">
                 <Text
                   color="blue.800"
@@ -104,7 +118,7 @@ const Header: React.FC = () => {
                 </Text>
               </RouterLink>
               
-              {/* Кнопка Выйти*/}
+              {/* Кнопка Выйти */}
               <Button
                 onClick={handleLogout}
                 colorScheme="blue"

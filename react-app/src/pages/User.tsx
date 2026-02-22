@@ -491,6 +491,20 @@ function User() {
                     )}
                   </Flex>
 
+                  {/* Роль пользователя */}
+                  <Flex align="center" gap={2} mb={2}>
+                    <Text color="blue.800">
+                      <Text as="span" fontWeight="bold">Роль:</Text>{' '}
+                      {user?.role === 'admin' ? (
+                        <Box as="span" color="purple.600" fontWeight="semibold">Администратор</Box>
+                      ) : user?.role === 'banned' ? (
+                        <Box as="span" color="red.600" fontWeight="semibold">Заблокирован</Box>
+                      ) : (
+                        <Box as="span" color="blue.800">Пользователь</Box>
+                      )}
+                    </Text>
+                  </Flex>
+
                   <Text color="blue.800" mb={4}>
                     <Text as="span" fontWeight="bold">Дата регистрации:</Text>{' '}
                     {user?.created_at ? new Date(user.created_at).toLocaleDateString('ru-RU') : 'Неизвестно'}
