@@ -9,12 +9,18 @@ import {
   ImageAnalysisResponse, 
   AnalyzedIngredient,
   saveAnalysis,
-  getSavedAnalyses,
+  getFilteredAnalyses,
   deleteSavedAnalysis,
   reanalyzeSavedAnalysis,
   SavedAnalysis
 } from '../services/apiService';
 import { useNavigate } from 'react-router-dom';
+
+interface FilterAnalysesParams {
+  show_safe: boolean;
+  show_warnings: boolean;
+  sort_order?: 'asc' | 'desc';
+}
 
 // Простые SVG иконки стрелок
 const ChevronLeftIcon = () => (
@@ -199,6 +205,8 @@ function Photo() {
   const [reanalyzingId, setReanalyzingId] = useState<number | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [analysisToDelete, setAnalysisToDelete] = useState<number | null>(null);
+  const [showSafe, setShowSafe] = useState(true);
+  const [showWarnings, setShowWarnings] = useState(true);
 
   const handleImageSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -285,12 +293,18 @@ function Photo() {
     }
   };
 
-  const loadSavedAnalyses = useCallback(async () => {
+  const loadSavedAnalyses = useCallback(async (params?: FilterAnalysesParams) => {
     if (!isAuth) return;
     
     setHistoryLoading(true);
     try {
-      const response = await getSavedAnalyses();
+      const filterParams = params || {
+        show_safe: showSafe,
+        show_warnings: showWarnings,
+        sort_order: 'desc'
+      };
+      
+      const response = await getFilteredAnalyses(filterParams);
       setSavedAnalyses(response.analyses);
       if (response.analyses.length > 0) {
         setCurrentAnalysisIndex(0);
@@ -300,7 +314,34 @@ function Photo() {
     } finally {
       setHistoryLoading(false);
     }
-  }, [isAuth]);
+  }, [isAuth, showSafe, showWarnings]);
+
+  // Обработчик изменения фильтров
+  const handleFilterChange = (type: 'safe' | 'warnings') => {
+    let newShowSafe = showSafe;
+    let newShowWarnings = showWarnings;
+    
+    if (type === 'safe') {
+      newShowSafe = !showSafe;
+    } else {
+      newShowWarnings = !showWarnings;
+    }
+    
+    // Если оба фильтра отключены, автоматически включаем оба
+    if (!newShowSafe && !newShowWarnings) {
+      newShowSafe = true;
+      newShowWarnings = true;
+    }
+    
+    setShowSafe(newShowSafe);
+    setShowWarnings(newShowWarnings);
+    
+    loadSavedAnalyses({
+      show_safe: newShowSafe,
+      show_warnings: newShowWarnings,
+      sort_order: 'desc'
+    });
+  };
 
   const handleDeleteAnalysis = async (id: number) => {
     setAnalysisToDelete(id);
@@ -354,9 +395,13 @@ function Photo() {
 
   useEffect(() => {
     if (isAuth) {
-      loadSavedAnalyses();
+      loadSavedAnalyses({
+        show_safe: showSafe,
+        show_warnings: showWarnings,
+        sort_order: 'desc'
+      });
     }
-  }, [isAuth, loadSavedAnalyses]);
+  }, [isAuth, showSafe, showWarnings, loadSavedAnalyses]);
 
   // Автоматическое скрытие уведомлений
   useEffect(() => {
@@ -709,29 +754,57 @@ function Photo() {
                 </Flex>
               ) : (
                 <>
-                  {/* Информация о текущем анализе */}
-                  <Flex justify="space-between" align="center" mb={6}>
-                    <Text color="blue.800" fontSize="lg">
-                      Анализ {savedAnalyses.length - currentAnalysisIndex} из {savedAnalyses.length}
-                    </Text>
-                    {savedAnalyses.length > 1 && (
-                      <Flex gap={2}>
-                        <ArrowIconButton
-                          icon={<ChevronLeftIcon />}
-                          onClick={handlePrevAnalysis}
-                          label="Предыдущий анализ"
-                          borderColor="blue.300"
-                          _hover={{ borderColor: 'blue.400' }}
-                        />
-                        <ArrowIconButton
-                          icon={<ChevronRightIcon />}
-                          onClick={handleNextAnalysis}
-                          label="Следующий анализ"
-                          borderColor="blue.300"
-                          _hover={{ borderColor: 'blue.400' }}
-                        />
-                      </Flex>
-                    )}
+                  {/* Фильтры */}
+                  <Flex justify="space-between" align="center" mb={4}>
+                    <Flex gap={2}>
+                      <Button
+                        size="sm"
+                        onClick={() => handleFilterChange('safe')}
+                        bg={showSafe ? 'green.100' : 'white'}
+                        color="green.800"
+                        border="2px solid"
+                        borderColor={showSafe ? 'green.500' : 'green.300'}
+                        _hover={{ bg: 'green.50' }}
+                      >
+                        Безопасные
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => handleFilterChange('warnings')}
+                        bg={showWarnings ? 'orange.100' : 'white'}
+                        color="orange.700"
+                        border="2px solid"
+                        borderColor={showWarnings ? 'orange.500' : 'orange.300'}
+                        _hover={{ bg: 'orange.50' }}
+                      >
+                        С предупреждениями
+                      </Button>
+                    </Flex>
+                    
+                    {/* Информация о текущем анализе и стрелки навигации */}
+                    <Flex align="center" gap={4}>
+                      <Text color="blue.800" fontSize="lg">
+                        Анализ {savedAnalyses.length - currentAnalysisIndex} из {savedAnalyses.length}
+                      </Text>
+                      {savedAnalyses.length > 1 && (
+                        <Flex gap={2}>
+                          <ArrowIconButton
+                            icon={<ChevronLeftIcon />}
+                            onClick={handlePrevAnalysis}
+                            label="Предыдущий анализ"
+                            borderColor="blue.300"
+                            _hover={{ borderColor: 'blue.400' }}
+                          />
+                          <ArrowIconButton
+                            icon={<ChevronRightIcon />}
+                            onClick={handleNextAnalysis}
+                            label="Следующий анализ"
+                            borderColor="blue.300"
+                            _hover={{ borderColor: 'blue.400' }}
+                          />
+                        </Flex>
+                      )}
+                    </Flex>
                   </Flex>
 
                   {/* Отображение текущего анализа */}

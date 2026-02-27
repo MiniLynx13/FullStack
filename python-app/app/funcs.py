@@ -73,3 +73,11 @@ def parse_medical_text(text: str) -> list:
     if not text:
         return []
     return [item.strip().lower() for item in re.split(r'[,;.\s\n]+', text) if item.strip()]
+
+def parse_bool_param(value: str) -> bool:
+    """Парсит строковое значение в булево"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ('true', '1', 'yes', 'on')
+    return bool(value)

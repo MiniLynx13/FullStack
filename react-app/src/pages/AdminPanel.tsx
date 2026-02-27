@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Container, Box, Heading, Text, Button, Flex, 
-  Spinner, CloseButton 
+  Spinner, CloseButton, Input 
 } from '@chakra-ui/react';
 import { useAuth } from '../hooks/useAuth';
 import { 
-  getAdminUsers, 
+  getFilteredUsers, 
   updateUserRole, 
   adminDeleteUser,
-  User
+  User,
+  UserRole,
+  FilterUsersParams
 } from '../services/apiService';
 import { useNavigate } from 'react-router-dom';
 
@@ -95,8 +97,6 @@ const UserRow = ({
 }) => {
   const [selectedRole, setSelectedRole] = useState(user.role);
 
-  // Синхронизируем selectedRole с актуальной ролью пользователя
-  // когда нет ожидающих изменений
   useEffect(() => {
     if (!hasChanges) {
       setSelectedRole(user.role);
@@ -172,10 +172,7 @@ const UserRow = ({
 
         {/* Выбор роли */}
         <Box flex={1}>
-          <Box
-            position="relative"
-            width="100%"
-          >
+          <Box position="relative" width="100%">
             <select
               value={selectedRole}
               onChange={handleRoleChange}
@@ -264,23 +261,28 @@ function AdminPanel() {
   const [changedRoles, setChangedRoles] = useState<Map<number, string>>(new Map());
   const [savingRole, setSavingRole] = useState<number | null>(null);
 
+  // Состояния для фильтрации и сортировки
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedRoles, setSelectedRoles] = useState<UserRole[]>(['user', 'admin', 'banned']);
+  const [sortBy, setSortBy] = useState<'username' | 'created_at'>('username');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
   const showNotification = (type: 'success' | 'error' | 'warning' | 'info', message: string) => {
     setNotification({ type, message });
     setTimeout(() => setNotification(null), 3000);
   };
 
-  // Загрузка списка пользователей
-  const loadUsers = useCallback(async () => {
+  // Загрузка отфильтрованных пользователей
+  const loadFilteredUsers = useCallback(async (params: FilterUsersParams) => {
     try {
       setLoading(true);
-      const response = await getAdminUsers();
+      const response = await getFilteredUsers(params);
       setUsers(response.users);
       setChangedRoles(new Map());
     } catch (error) {
       console.error('Error loading users:', error);
       showNotification('error', 'Не удалось загрузить список пользователей');
       
-      // Если ошибка доступа, перенаправляем на главную
       if (error instanceof Error && error.message.includes('Доступ запрещен')) {
         setTimeout(() => navigate('/'), 2000);
       }
@@ -289,16 +291,61 @@ function AdminPanel() {
     }
   }, [navigate]);
 
-  // Проверка прав доступа
+  // Функция для применения фильтров
+  const applyFilters = useCallback(() => {
+    const params: FilterUsersParams = {
+      search: searchQuery || undefined,
+      roles: selectedRoles,
+      sort_by: sortBy,
+      sort_order: sortOrder
+    };
+    loadFilteredUsers(params);
+  }, [searchQuery, selectedRoles, sortBy, sortOrder, loadFilteredUsers]);
+
+  // Эффект для debounced поиска
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      const params: FilterUsersParams = {
+        search: searchQuery || undefined,
+        roles: selectedRoles,
+        sort_by: sortBy,
+        sort_order: sortOrder
+      };
+      loadFilteredUsers(params);
+    }, 300);
+
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [searchQuery, selectedRoles, sortBy, sortOrder, loadFilteredUsers]);
+
+  // Эффект для фильтров по ролям и сортировки (без debounce)
+  useEffect(() => {
+    const params: FilterUsersParams = {
+      search: searchQuery || undefined,
+      roles: selectedRoles,
+      sort_by: sortBy,
+      sort_order: sortOrder
+    };
+    loadFilteredUsers(params);
+  }, [selectedRoles, sortBy, sortOrder, loadFilteredUsers, searchQuery]);
+
+  // Проверка прав доступа и первоначальная загрузка
   useEffect(() => {
     if (!isAuth) {
       navigate('/authorisation');
     } else if (!isAdmin) {
       navigate('/');
     } else {
-      loadUsers();
+      const params: FilterUsersParams = {
+        search: searchQuery || undefined,
+        roles: selectedRoles,
+        sort_by: sortBy,
+        sort_order: sortOrder
+      };
+      loadFilteredUsers(params);
     }
-  }, [isAuth, isAdmin, navigate, loadUsers]);
+  }, [isAuth, isAdmin, navigate, loadFilteredUsers, searchQuery, selectedRoles, sortBy, sortOrder]);
 
   // Обработка изменения роли
   const handleRoleChange = (userId: number, newRole: string) => {
@@ -332,8 +379,8 @@ function AdminPanel() {
         new_role: newRole
       });
       
-      // Обновляем список пользователей
-      await loadUsers();
+      // Перезагружаем с текущими фильтрами
+      applyFilters();
       showNotification('success', 'Роль пользователя успешно обновлена');
     } catch (error) {
       console.error('Error updating role:', error);
@@ -372,8 +419,8 @@ function AdminPanel() {
       setUpdatingId(userToDelete.id);
       await adminDeleteUser(userToDelete.id);
       
-      // Обновляем список пользователей
-      await loadUsers();
+      // Перезагружаем с текущими фильтрами
+      applyFilters();
       showNotification('success', `Пользователь ${userToDelete.username} успешно удален`);
     } catch (error) {
       console.error('Error deleting user:', error);
@@ -385,25 +432,29 @@ function AdminPanel() {
     }
   };
 
-  // Сохранение всех изменений
-  const handleSaveAllChanges = async () => {
-    const changes = Array.from(changedRoles.entries());
-    
-    for (const [userId] of changes) {
-      if (userId !== currentUser?.id) { // Пропускаем себя
-        await handleSaveRole(userId);
-      }
+  // Переключение сортировки
+  const toggleSort = (field: 'username' | 'created_at') => {
+    if (sortBy === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(field);
+      setSortOrder('asc');
     }
   };
 
-  // Отмена всех изменений
-  const handleCancelAllChanges = () => {
-    setChangedRoles(new Map());
+  // Обработка выбора ролей
+  const toggleRoleFilter = (role: UserRole) => {
+    setSelectedRoles(prev => {
+      if (prev.includes(role)) {
+        return prev.filter(r => r !== role);
+      } else {
+        return [...prev, role];
+      }
+    });
   };
 
   const hasAnyChanges = changedRoles.size > 0;
 
-  // Показываем заглушку во время проверки прав
   if (!isAuth || !isAdmin) {
     return (
       <Container 
@@ -468,41 +519,6 @@ function AdminPanel() {
               Управление пользователями и их ролями
             </Text>
           </Box>
-
-          {/* Кнопки управления изменениями */}
-          {hasAnyChanges && (
-            <Flex gap={3}>
-              <Button
-                onClick={handleSaveAllChanges}
-                colorScheme="blue"
-                bg="blue.50"
-                color="blue.800"
-                border="2px solid"
-                borderColor="blue.700"
-                _hover={{ 
-                  bg: 'blue.100',
-                  borderColor: 'blue.800' 
-                }}
-                _active={{ 
-                  bg: 'blue.200',
-                  borderColor: 'blue.900' 
-                }}
-                loading={savingRole !== null}
-                loadingText="Сохранение"
-              >
-                Сохранить все изменения
-              </Button>
-              <Button
-                onClick={handleCancelAllChanges}
-                variant="outline"
-                colorScheme="blue"
-                borderColor="blue.300"
-                _hover={{ borderColor: 'blue.400', bg: 'blue.50' }}
-              >
-                Отменить все
-              </Button>
-            </Flex>
-          )}
         </Flex>
 
         {/* Статистика */}
@@ -549,27 +565,110 @@ function AdminPanel() {
           </Box>
         </Flex>
 
+        {/* Поиск и фильтры */}
+        <Flex 
+          direction={{ base: 'column', md: 'row' }} 
+          gap={4} 
+          mb={6} 
+          align={{ base: 'stretch', md: 'center' }}
+          justify="space-between"
+        >
+          {/* Поисковая строка */}
+          <Box flex={2}>
+            <Input
+              placeholder="Поиск по имени пользователя..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              bg="white"
+              border="2px solid"
+              borderColor="blue.300"
+              _hover={{ borderColor: 'blue.400' }}
+              _focus={{ borderColor: 'blue.500', boxShadow: 'none' }}
+              borderRadius="lg"
+            />
+          </Box>
+
+          {/* Кнопки для фильтрации по ролям */}
+          <Box flex={1}>
+            <Flex gap={2} justify="flex-end">
+              <Button
+                size="sm"
+                onClick={() => toggleRoleFilter('user')}
+                bg={selectedRoles.includes('user') ? 'blue.100' : 'white'}
+                color="blue.800"
+                border="2px solid"
+                borderColor={selectedRoles.includes('user') ? 'blue.500' : 'blue.300'}
+                _hover={{ bg: 'blue.50' }}
+              >
+                Пользователи
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => toggleRoleFilter('admin')}
+                bg={selectedRoles.includes('admin') ? 'purple.100' : 'white'}
+                color="purple.700"
+                border="2px solid"
+                borderColor={selectedRoles.includes('admin') ? 'purple.500' : 'purple.300'}
+                _hover={{ bg: 'purple.50' }}
+              >
+                Админы
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => toggleRoleFilter('banned')}
+                bg={selectedRoles.includes('banned') ? 'orange.100' : 'white'}
+                color="orange.700"
+                border="2px solid"
+                borderColor={selectedRoles.includes('banned') ? 'orange.500' : 'orange.300'}
+                _hover={{ bg: 'orange.50' }}
+              >
+                Забаненные
+              </Button>
+            </Flex>
+          </Box>
+        </Flex>
+
+        {/* Заголовок таблицы с сортировкой */}
+        <Flex 
+          p={3} 
+          bg="blue.100" 
+          borderRadius="lg" 
+          mb={3}
+          display={{ base: 'none', md: 'flex' }}
+        >
+          <Box 
+            flex={1.5} 
+            color="blue.900" 
+            fontWeight="bold"
+            cursor="pointer"
+            onClick={() => toggleSort('username')}
+            _hover={{ color: 'blue.700' }}
+          >
+            Пользователь {sortBy === 'username' && (sortOrder === 'asc' ? '↑' : '↓')}
+          </Box>
+          <Box 
+            flex={1.8} 
+            color="blue.900" 
+            fontWeight="bold"
+            cursor="pointer"
+            onClick={() => toggleSort('created_at')}
+            _hover={{ color: 'blue.700' }}
+          >
+            Дата регистрации {sortBy === 'created_at' && (sortOrder === 'asc' ? '↑' : '↓')}
+          </Box>
+          <Box flex={1.8} color="blue.900" fontWeight="bold">Роль</Box>
+          <Box flex={0.7} color="blue.900" fontWeight="bold">Действия</Box>
+        </Flex>
+
         {/* Список пользователей */}
         <Box>
-          <Flex 
-            p={3} 
-            bg="blue.100" 
-            borderRadius="lg" 
-            mb={3}
-            display={{ base: 'none', md: 'flex' }}
-          >
-            <Box flex={2} color="blue.900" fontWeight="bold">Пользователь</Box>
-            <Box flex={1} color="blue.900" fontWeight="bold">Роль</Box>
-            <Box flex={0.5} color="blue.900" fontWeight="bold">Действия</Box>
-          </Flex>
-
           {loading ? (
             <Flex justify="center" align="center" py={12}>
               <Spinner size="xl" color="blue.500" />
             </Flex>
           ) : users.length === 0 ? (
             <Box textAlign="center" py={12}>
-              <Text color="blue.800" fontSize="lg">Нет пользователей</Text>
+              <Text color="blue.800" fontSize="lg">Пользователи не найдены</Text>
             </Box>
           ) : (
             users.map(user => (
@@ -607,6 +706,48 @@ function AdminPanel() {
             ))
           )}
         </Box>
+
+        {/* Кнопки сохранения всех изменений */}
+        {hasAnyChanges && (
+          <Flex justify="flex-end" gap={3} mt={6}>
+            <Button
+              onClick={async () => {
+                const changes = Array.from(changedRoles.entries());
+                for (const [userId] of changes) {
+                  if (userId !== currentUser?.id) {
+                    await handleSaveRole(userId);
+                  }
+                }
+              }}
+              colorScheme="blue"
+              bg="blue.50"
+              color="blue.800"
+              border="2px solid"
+              borderColor="blue.700"
+              _hover={{ 
+                bg: 'blue.100',
+                borderColor: 'blue.800' 
+              }}
+              _active={{ 
+                bg: 'blue.200',
+                borderColor: 'blue.900' 
+              }}
+              loading={savingRole !== null}
+              loadingText="Сохранение"
+            >
+              Сохранить все изменения
+            </Button>
+            <Button
+              onClick={() => setChangedRoles(new Map())}
+              variant="outline"
+              colorScheme="blue"
+              borderColor="blue.300"
+              _hover={{ borderColor: 'blue.400', bg: 'blue.50' }}
+            >
+              Отменить все
+            </Button>
+          </Flex>
+        )}
 
         {/* Информация о текущем администраторе */}
         {currentUser && (

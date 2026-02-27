@@ -71,6 +71,19 @@ export interface AdminUsersResponse {
   users: User[];
 }
 
+export interface FilterUsersParams {
+  search?: string;
+  roles?: UserRole[];
+  sort_by?: 'username' | 'created_at';
+  sort_order?: 'asc' | 'desc';
+}
+
+export interface FilterAnalysesParams {
+  show_safe: boolean;
+  show_warnings: boolean;
+  sort_order?: 'asc' | 'desc';
+}
+
 // Сохранение refresh токена
 export const saveRefreshToken = (token: string): void => {
   localStorage.setItem('refresh_token', token);
@@ -665,6 +678,73 @@ export const adminDeleteUser = async (userId: number): Promise<{ message: string
     }
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.detail || 'Ошибка удаления пользователя');
+  }
+
+  return response.json();
+};
+
+// Получение отфильтрованных пользователей (только для админа)
+export const getFilteredUsers = async (params: FilterUsersParams): Promise<AdminUsersResponse> => {
+  const queryParams = new URLSearchParams();
+  
+  if (params.search) {
+    queryParams.append('search', params.search);
+  }
+  
+  if (params.roles && params.roles.length > 0) {
+    params.roles.forEach(role => queryParams.append('roles', role));
+  }
+  
+  if (params.sort_by) {
+    queryParams.append('sort_by', params.sort_by);
+  }
+  
+  if (params.sort_order) {
+    queryParams.append('sort_order', params.sort_order);
+  }
+  
+  const url = `${API_BASE_URL}/admin/filter/users${queryParams.toString() ? '?' + queryParams.toString() : ''}`;
+  
+  const response = await authFetch(url, {
+    method: 'GET',
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      removeTokens();
+    }
+    if (response.status === 403) {
+      throw new Error('Доступ запрещен. Требуются права администратора');
+    }
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Ошибка получения списка пользователей');
+  }
+
+  return response.json();
+};
+
+// Получение отфильтрованных анализов
+export const getFilteredAnalyses = async (params: FilterAnalysesParams): Promise<SavedAnalysesResponse> => {
+  const queryParams = new URLSearchParams();
+  
+  queryParams.append('show_safe', params.show_safe.toString());
+  queryParams.append('show_warnings', params.show_warnings.toString());
+  if (params.sort_order) {
+    queryParams.append('sort_order', params.sort_order);
+  }
+  
+  const url = `${API_BASE_URL}/filter/saved-analyses${queryParams.toString() ? '?' + queryParams.toString() : ''}`;
+  
+  const response = await authFetch(url, {
+    method: 'GET',
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      removeTokens();
+    }
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Ошибка получения сохраненных анализов');
   }
 
   return response.json();

@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from ..models import UpdateUserRole, UserRole
 from ..db import get_db_connection
 from ..dependencies import require_admin
 from ..minio import delete_image_from_minio
+from typing import Optional, List
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -19,6 +20,66 @@ async def get_all_users(admin = Depends(require_admin)):
     
     users = cur.fetchall()
     conn.close()
+    
+    return {
+        "users": [
+            {
+                "id": user['id'],
+                "username": user['username'],
+                "email": user['email'],
+                "role": user['role'],
+                "created_at": user['created_at']
+            }
+            for user in users
+        ]
+    }
+
+@router.get("/filter/users")
+async def get_filtered_users(
+    search: Optional[str] = Query(None, description="Поиск по имени пользователя"),
+    roles: Optional[List[UserRole]] = Query(None, description="Фильтр по ролям"),
+    sort_by: Optional[str] = Query("username", description="Поле для сортировки: username или created_at"),
+    sort_order: Optional[str] = Query("asc", description="Порядок сортировки: asc или desc"),
+    admin = Depends(require_admin)
+):
+    """
+    Получение отфильтрованного и отсортированного списка пользователей
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Базовый запрос
+    query = "SELECT id, username, email, role, created_at FROM users"
+    params = []
+    conditions = []
+    
+    # Фильтр по ролям
+    if roles:
+        placeholders = ','.join(['?' for _ in roles])
+        conditions.append(f"role IN ({placeholders})")
+        params.extend([role.value for role in roles])
+    
+    # Добавляем условия WHERE
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    
+    # Сортировка
+    valid_sort_fields = ['username', 'created_at']
+    if sort_by in valid_sort_fields:
+        order = "ASC" if sort_order.lower() == "asc" else "DESC"
+        query += f" ORDER BY {sort_by} {order}"
+    
+    cur.execute(query, params)
+    users = cur.fetchall()
+    conn.close()
+
+    # Поиск по имени пользователя
+    if search:
+        search_lower = search.lower()
+        users = [
+            user for user in users 
+            if search_lower in user['username'].lower()
+        ]
     
     return {
         "users": [

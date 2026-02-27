@@ -1,5 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, BackgroundTasks
-from datetime import timedelta
+from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Form
 import io
 import json
 import traceback
@@ -330,6 +329,66 @@ async def get_saved_analyses(user = Depends(require_not_banned)):
         ORDER BY created_at DESC
     ''', (user['id'],))
     
+    saved_analyses = cur.fetchall()
+    conn.close()
+    
+    results = []
+    for analysis in saved_analyses:
+        # Генерируем временную ссылку на изображение
+        image_url = get_image_url(analysis['image_path'])
+        
+        results.append({
+            "id": analysis['id'],
+            "user_id": analysis['user_id'],
+            "image_url": image_url,
+            "analysis_result": json.loads(analysis['analysis_result']),
+            "ingredients_count": analysis['ingredients_count'],
+            "warnings_count": analysis['warnings_count'],
+            "created_at": analysis['created_at']
+        })
+    
+    return {"analyses": results}
+
+@router.get("/filter/saved-analyses")
+async def get_filtered_analyses(
+    show_safe: bool = Query(True, description="Показывать безопасные анализы (без предупреждений)"),
+    show_warnings: bool = Query(True, description="Показывать анализы с предупреждениями"),
+    sort_order: str = Query("desc", description="Порядок сортировки: asc или desc"),
+    user = Depends(require_not_banned)
+):
+    """
+    Получение отфильтрованных сохраненных анализов пользователя
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Базовый запрос
+    query = """
+        SELECT id, user_id, image_path, analysis_result, 
+               ingredients_count, warnings_count, created_at
+        FROM saved_analyses 
+        WHERE user_id = ?
+    """
+    params = [user['id']]
+    
+    # Применяем фильтры
+    if show_safe and not show_warnings:
+        # Только безопасные
+        query += " AND warnings_count = 0"
+    elif not show_safe and show_warnings:
+        # Только с предупреждениями
+        query += " AND warnings_count > 0"
+    elif not show_safe and not show_warnings:
+        # Ничего не показываем (возвращаем пустой список)
+        conn.close()
+        return {"analyses": []}
+    # else: show_safe and show_warnings - показываем все
+    
+    # Сортировка
+    order = "DESC" if sort_order.lower() == "desc" else "ASC"
+    query += f" ORDER BY created_at {order}"
+    
+    cur.execute(query, params)
     saved_analyses = cur.fetchall()
     conn.close()
     

@@ -71,3 +71,15 @@ class SavedAnalysis(BaseModel):
     ref_count: int = 1
     original_analysis_id: Optional[int] = None
     is_reanalysis: Optional[bool] = False
+
+class FilterSortRequest(BaseModel):
+    search: Optional[str] = None
+    roles: Optional[List[UserRole]] = None
+    sort_by: Optional[str] = "username"
+    sort_order: Optional[str] = "asc"
+
+class AnalysisFilterParams(BaseModel):
+    """Параметры фильтрации сохраненных анализов"""
+    show_safe: Optional[bool] = True
+    show_warnings: Optional[bool] = True
+    sort_order: Optional[str] = "desc"
