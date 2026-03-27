@@ -24,3 +24,7 @@ CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'http://localhost:3000').split(',')
 # Server
 HOST = os.getenv('HOST', '0.0.0.0')
 PORT = int(os.getenv('PORT', 8000))
+
+ENVIRONMENT = os.getenv('ENVIRONMENT', 'development')
+IS_PRODUCTION = ENVIRONMENT == 'production'
+BASE_URL = os.getenv('BASE_URL', 'http://localhost:3000')  # Для продакшена

@@ -11,7 +11,7 @@ import ollama
 from ..db import get_db_connection
 from ..minio import minio_client, save_image_to_minio, get_image_url, delete_image_from_minio
 from ..dependencies import require_not_banned
-from ..funcs import parse_medical_text
+from ..funcs import parse_medical_text, analyze_image_with_fallback
 from ..analyse_utils import reanalyze_all_saved_analyses
 from ..config import MINIO_BUCKET_NAME
 
@@ -22,6 +22,11 @@ async def analyze_image(
     image: UploadFile = File(...),
     user = Depends(require_not_banned)
 ):
+    """
+    Анализ изображения на наличие аллергенов
+    Поддерживает graceful degradation при недоступности Ollama
+    """
+    
     # Получаем медицинские данные пользователя
     conn = get_db_connection()
     cur = conn.cursor()
@@ -76,95 +81,26 @@ async def analyze_image(
         
         # Конвертируем изображение в base64
         image_base64 = base64.b64encode(image_data).decode('utf-8')
+        # Сохраняем оригинальные данные для возможного сжатия
+        original_image_data = image_data
         
-        # Создаем асинхронную функцию для вызова Ollama
-        async def call_ollama(img_base64: str):
-            """Асинхронный вызов Ollama с обработкой ошибок"""
-            prompt = """Analyze this image and list all ingredients you can identify or assume in JSON format. 
-            Use this exact structure: {"ingredients": ["ingredient1", "ingredient2", ...]}
-            Be fast and concise."""
-            
-            def sync_ollama():
-                return ollama.chat(
-                    model='qwen3-vl:4b',
-                    messages=[
-                        {
-                            'role': 'user',
-                            'content': prompt,
-                            'images': [img_base64]
-                        }
-                    ],
-                    options={
-                        'num_timeout': 420 # 7 минут в секундах
-                    }
-                )
-            
-            # Запускаем синхронную функцию в отдельном потоке
-            response = await asyncio.to_thread(sync_ollama)
-            return response
+        # Используем функцию для вызова Ollama с fallback
+        analysis_result = await analyze_image_with_fallback(image_base64, original_image_data)
         
-        # Отправляем запрос к Ollama с timeout
-        try:
-            # Используем asyncio.wait_for для установки таймаута
-            response = await asyncio.wait_for(
-                call_ollama(image_base64),
-                timeout=430  # 7 минут
-            )
-        except asyncio.TimeoutError:
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail="Анализ превысил максимальное время ожидания (8 минут)"
-            )
-        except Exception as e:
-            print(f"Ollama error: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Ошибка при обращении к модели AI: {str(e)}"
-            )
+        # Если анализ пришел из fallback, добавляем дополнительное предупреждение
+        is_fallback = analysis_result.get('source') == 'fallback'
         
-        # Извлекаем JSON из ответа
-        content = response['message']['content']
-        print(f"Ollama response: {content}")
+        # Получаем список ингредиентов
+        raw_ingredients = analysis_result.get('ingredients', [])
         
-        # Пытаемся найти JSON в ответе
-        json_match = re.search(r'\{[^{}]*\{.*\}[^{}]*\}|\{.*\}', content, re.DOTALL)
-        ingredients_list = []
-        
-        if json_match:
-            json_str = json_match.group()
-            try:
-                # Очищаем JSON строку
-                json_str = re.sub(r'```json|```', '', json_str).strip()
-                ingredients_data = json.loads(json_str)
-                ingredients_list = ingredients_data.get('ingredients', [])
-                if not isinstance(ingredients_list, list):
-                    ingredients_list = [str(ingredients_list)]
-            except json.JSONDecodeError as e:
-                print(f"JSON decode error: {e}")
-                # Если не удалось распарсить JSON, извлекаем ингредиенты другим способом
-                ingredients_list = [line.strip() for line in content.split('\n') 
-                                  if line.strip() and not line.strip().startswith('{') 
-                                  and not line.strip().startswith('}')]
+        # Если ингредиенты пришли как список строк, преобразуем в формат с is_allergen/is_contraindication
+        if raw_ingredients and isinstance(raw_ingredients[0], str):
+            # Преобразуем строки в объекты
+            ingredients_list = [{"name": ing, "is_allergen": False, "is_contraindication": False} 
+                               for ing in raw_ingredients]
         else:
-            # Если JSON не найден, пытаемся извлечь ингредиенты по строкам
-            ingredients_list = [line.strip() for line in content.split('\n') 
-                              if line.strip() and len(line.strip()) > 3]
-        
-        # Если список пустой, используем весь контент как один ингредиент
-        if not ingredients_list:
-            ingredients_list = [content.strip()]
-        
-        # Очищаем ингредиенты от лишних символов
-        cleaned_ingredients = []
-        for ingredient in ingredients_list:
-            if ingredient and isinstance(ingredient, str):
-                # Убираем маркеры списка, кавычки и лишние пробелы
-                clean_ingredient = re.sub(r'^[\-\*•\d\.\s"\']+|[\-\*•\d\.\s"\']+$', '', ingredient)
-                if clean_ingredient and len(clean_ingredient) > 1:
-                    cleaned_ingredients.append(clean_ingredient)
-        
-        if not cleaned_ingredients:
-            cleaned_ingredients = ["Не удалось определить ингредиенты"]
+            # Уже в нужном формате
+            ingredients_list = raw_ingredients
         
         # Проверяем на аллергены если есть медицинские данные
         allergens = []
@@ -178,49 +114,83 @@ async def analyze_image(
         analyzed_ingredients = []
         warnings = []
         
-        for ingredient in cleaned_ingredients:
-            ingredient_lower = ingredient.lower()
-            is_allergen = False
-            is_contraindication = False
+        for ingredient_item in ingredients_list:
+            # Поддерживаем оба формата: строка или словарь
+            if isinstance(ingredient_item, str):
+                ingredient_name = ingredient_item
+                is_allergen = False
+                is_contraindication = False
+            else:
+                ingredient_name = ingredient_item.get('name', '')
+                is_allergen = ingredient_item.get('is_allergen', False)
+                is_contraindication = ingredient_item.get('is_contraindication', False)
             
-            # Проверяем на аллергены
-            for allergen in allergens:
-                if allergen and allergen in ingredient_lower:
-                    is_allergen = True
-                    break
+            ingredient_lower = ingredient_name.lower()
+            
+            # Проверяем на аллергены (если не было уже помечено)
+            if not is_allergen:
+                for allergen in allergens:
+                    if allergen and allergen in ingredient_lower:
+                        is_allergen = True
+                        break
             
             # Проверяем на противопоказания
-            for contra in contraindications:
-                if contra and contra in ingredient_lower:
-                    is_contraindication = True
-                    break
+            if not is_contraindication:
+                for contra in contraindications:
+                    if contra and contra in ingredient_lower:
+                        is_contraindication = True
+                        break
             
             analyzed_ingredients.append({
-                'name': ingredient,
+                'name': ingredient_name,
                 'is_allergen': is_allergen,
                 'is_contraindication': is_contraindication
             })
             
             if is_allergen:
-                warnings.append(f"Аллерген обнаружен: {ingredient}")
+                warnings.append(f"⚠️ Аллерген обнаружен: {ingredient_name}")
             if is_contraindication:
-                warnings.append(f"Противопоказание: {ingredient}")
+                warnings.append(f"⚠️ Противопоказание: {ingredient_name}")
         
-        return {
+        # Если это fallback, добавляем информационное сообщение
+        if is_fallback:
+            warnings.insert(0, "ℹ️ Анализ выполнен в упрощенном режиме. Результат может быть менее точным.")
+        
+        # Формируем ответ
+        response = {
             "ingredients": analyzed_ingredients,
             "warnings": warnings,
-            "original_response": content
+            "original_response": analysis_result.get('original_response', 'Анализ выполнен')
         }
+        
+        # Если была ошибка, добавляем ее в ответ для отладки (но не показываем пользователю)
+        if analysis_result.get('error'):
+            response['_debug_error'] = analysis_result['error']
+        
+        return response
         
     except HTTPException:
         raise
     except Exception as e:
         print(f"Ошибка при обработке изображения: {str(e)}")
         traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ошибка при обработке изображения: {str(e)}"
-        )
+        
+        # Возвращаем graceful fallback вместо 500 ошибки
+        return {
+            "ingredients": [
+                {
+                    "name": "Не удалось выполнить анализ",
+                    "is_allergen": False,
+                    "is_contraindication": False
+                }
+            ],
+            "warnings": [
+                "⚠️ Произошла ошибка при анализе изображения. Пожалуйста, попробуйте позже.",
+                f"Ошибка: {str(e)[:100]}"
+            ],
+            "original_response": f"Error: {str(e)}",
+            "is_fallback": True
+        }
 
 @router.post("/save-analysis")
 async def save_analysis(

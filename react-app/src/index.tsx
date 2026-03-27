@@ -4,6 +4,7 @@ import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 import { ChakraProvider } from '@chakra-ui/react';
+import { HelmetProvider } from 'react-helmet-async';
 import { system } from './theme/theme';
 
 const root = ReactDOM.createRoot(
@@ -12,9 +13,11 @@ const root = ReactDOM.createRoot(
 
 root.render(
   <React.StrictMode>
-    <ChakraProvider value={system}>
-      <App />
-    </ChakraProvider>
+    <HelmetProvider>
+      <ChakraProvider value={system}>
+        <App />
+      </ChakraProvider>
+    </HelmetProvider>
   </React.StrictMode>
 );
 

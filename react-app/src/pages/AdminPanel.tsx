@@ -13,6 +13,7 @@ import {
   FilterUsersParams
 } from '../services/apiService';
 import { useNavigate } from 'react-router-dom';
+import { SEO } from '../components/SEO';
 
 // Компонент для уведомлений
 const Notification = ({ 
@@ -481,6 +482,12 @@ function AdminPanel() {
   }
 
   return (
+    <>
+    <SEO 
+      title="Панель администратора"
+      description="Управление пользователями и их ролями"
+      noindex  // Админ-панель - не индексируем
+    />
     <Container 
       maxW="1200px" 
       p={0} 
@@ -813,6 +820,7 @@ function AdminPanel() {
         </Box>
       )}
     </Container>
+    </>
   );
 }
 

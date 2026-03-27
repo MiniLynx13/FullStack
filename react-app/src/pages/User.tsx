@@ -3,6 +3,7 @@ import { Container, Box, Heading, Text, Button, Grid, GridItem, Textarea, Input,
 import { useAuth } from '../hooks/useAuth';
 import { getMedicalData, saveMedicalData, MedicalData, updateProfile, changePassword, deleteAccount } from '../services/apiService';
 import { useNavigate } from 'react-router-dom';
+import { SEO } from '../components/SEO';
 
 // Иконка карандаша для редактирования (синяя)
 const PencilIcon = () => (
@@ -370,6 +371,12 @@ function User() {
   }
 
   return (
+    <>
+    <SEO 
+      title="Личный кабинет"
+      description="Управление профилем, медицинскими данными и историей анализов"
+      noindex  // Закрытая страница - не индексируем
+    />
     <Container 
       maxW="1200px" 
       p={0} 
@@ -837,6 +844,7 @@ function User() {
         </Box>
       )}
     </Container>
+    </>
   );
 }
 

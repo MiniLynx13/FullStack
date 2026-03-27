@@ -2,11 +2,17 @@ import React from 'react';
 import { Container, Heading, Text, Button, Grid, GridItem, Box, Image } from '@chakra-ui/react';
 import { useNavigate } from 'react-router-dom';
 import Present from '../Present.png';
+import { SEO } from '../components/SEO';
 
 function Home() {
   const navigate = useNavigate();
 
   return (
+    <>
+    <SEO 
+      title="Главная"
+      description="AllergyDetect - определение аллергенов по фотографии продуктов. Безопасное хранение данных и персонализированные рекомендации."
+    />
     <Container 
       maxW="1200px" 
       p={0} 
@@ -105,6 +111,7 @@ function Home() {
         </Grid>
       </Box>
     </Container>
+    </>
   );
 }
 

@@ -1,11 +1,18 @@
 import React from 'react';
 import { Container, Box, Heading, Text, Button } from '@chakra-ui/react';
 import { useNavigate } from 'react-router-dom';
+import { SEO } from '../components/SEO';
 
 function Error404() {
   const navigate = useNavigate();
 
   return (
+    <>
+    <SEO 
+      title="Страница не найдена"
+      description="Запрошенная страница не существует"
+      noindex  // 404 страница - не индексируем
+    />
     <Container 
       maxW="1200px" 
       p={0} 
@@ -74,6 +81,7 @@ function Error404() {
         </Box>
       </Box>
     </Container>
+    </>
   );
 }
 

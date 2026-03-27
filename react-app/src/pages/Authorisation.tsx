@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Box, Container, Heading, Input, Button, Text, CloseButton } from '@chakra-ui/react';
 import { useAuth } from '../hooks/useAuth';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { SEO } from '../components/SEO';
 
 function Authorisation() {
   const { login, register, loading: authLoading, error: authError, clearError, isAuth } = useAuth();
@@ -158,6 +159,12 @@ function Authorisation() {
   }
 
   return (
+    <>
+    <SEO 
+      title="Авторизация"
+      description="Вход или регистрация в AllergyDetect"
+      noindex  // Страница авторизации - не индексируем
+    />
     <Container 
       maxW="1200px" 
       p={0} 
@@ -429,6 +436,7 @@ function Authorisation() {
         </Box>
       </Box>
     </Container>
+    </>
   );
 }
 

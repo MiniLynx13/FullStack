@@ -2,6 +2,7 @@ import React from 'react';
 import { Container, Box, Heading, Text, Button, Flex } from '@chakra-ui/react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { SEO } from '../components/SEO';
 
 // Иконка замка для забаненного пользователя
 const LockIcon = () => (
@@ -94,6 +95,12 @@ function Banned() {
   };
 
   return (
+    <>
+    <SEO 
+      title="Доступ заблокирован"
+      description="Ваш аккаунт заблокирован"
+      noindex  // Закрытая страница - не индексируем
+    />
     <Container 
       maxW="1200px" 
       p={0} 
@@ -240,6 +247,7 @@ function Banned() {
         </Box>
       </Box>
     </Container>
+    </>
   );
 }
 

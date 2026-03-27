@@ -15,6 +15,7 @@ import {
   SavedAnalysis
 } from '../services/apiService';
 import { useNavigate } from 'react-router-dom';
+import { SEO } from '../components/SEO';
 
 interface FilterAnalysesParams {
   show_safe: boolean;
@@ -524,6 +525,12 @@ function Photo() {
   }
 
   return (
+    <>
+    <SEO 
+      title="Анализ аллергенов"
+      description="Загрузите фото продукта и получите список ингредиентов с предупреждениями об аллергенах"
+      noindex={!isAuth}
+    />
     <Container 
       maxW="1200px" 
       p={0} 
@@ -599,7 +606,8 @@ function Photo() {
                 <Box mb={6} textAlign="center">
                   <Image
                     src={previewUrl}
-                    alt="Preview"
+                    alt="Превь. выбранного продукта"
+                    loading="lazy"
                     borderRadius="lg"
                     boxShadow="md"
                     maxH="300px"
@@ -833,6 +841,7 @@ function Photo() {
                             <Image
                               src={currentAnalysis.image_url}
                               alt="Сохраненный анализ"
+                              loading="lazy"
                               width="80px"
                               height="80px"
                               objectFit="cover"
@@ -989,6 +998,7 @@ function Photo() {
         </Box>
       )}
     </Container>
+    </>
   );
 }
 
