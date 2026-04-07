@@ -65,7 +65,7 @@ async def organization_schema(request: Request):
         "@context": "https://schema.org",
         "@type": "WebApplication",
         "name": "AllergyDetect",
-        "description": "Определение аллергенов по фотографии продуктов",
+        "description": "Определение ингредиентов по фотографии продуктов, выявление аллергенов и сигнализирование о медицинских противопоказаниях.",
         "url": base_url,
         "applicationCategory": "Health & Wellness",
         "operatingSystem": "Web",
