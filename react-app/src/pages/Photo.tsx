@@ -12,7 +12,8 @@ import {
   getFilteredAnalyses,
   deleteSavedAnalysis,
   reanalyzeSavedAnalysis,
-  SavedAnalysis
+  SavedAnalysis,
+  getAnalysisImage
 } from '../services/apiService';
 import { useNavigate } from 'react-router-dom';
 import { SEO } from '../components/SEO';
@@ -200,6 +201,7 @@ function Photo() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [savedAnalyses, setSavedAnalyses] = useState<SavedAnalysis[]>([]);
+  const [imageUrls, setImageUrls] = useState<Map<number, string>>(new Map());
   const [currentAnalysisIndex, setCurrentAnalysisIndex] = useState<number>(0);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -466,6 +468,34 @@ function Photo() {
   };
 
   const currentAnalysis = savedAnalyses[currentAnalysisIndex];
+
+  // Загружаем изображения для всех анализов
+  useEffect(() => {
+    const loadAllImages = async () => {
+      const urlsMap = new Map();
+      
+      for (const analysis of savedAnalyses) {
+        try {
+          const url = await getAnalysisImage(analysis.id);
+          urlsMap.set(analysis.id, url);
+        } catch (err) {
+          console.error(`Error loading image ${analysis.id}:`, err);
+        }
+      }
+      
+      setImageUrls(urlsMap);
+    };
+    
+    if (savedAnalyses.length > 0) {
+      loadAllImages();
+    }
+    
+    // Очистка
+    return () => {
+      imageUrls.forEach(url => URL.revokeObjectURL(url));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedAnalyses]);
 
   // Показываем страницу для неавторизованных пользователей
   if (!isAuth) {
@@ -838,9 +868,9 @@ function Photo() {
                               Предупреждений: {currentAnalysis.warnings_count}
                             </Text>
                           </Box>
-                          {currentAnalysis.image_url && (
+                          {imageUrls.get(currentAnalysis.id) && (
                             <Image
-                              src={currentAnalysis.image_url}
+                              src={imageUrls.get(currentAnalysis.id)}
                               alt="Сохраненный анализ"
                               loading="lazy"
                               width="80px"

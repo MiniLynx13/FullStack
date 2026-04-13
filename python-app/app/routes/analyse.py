@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Form
+from fastapi.responses import Response
 import io
 import json
 import traceback
@@ -304,13 +305,9 @@ async def get_saved_analyses(user = Depends(require_not_banned)):
     
     results = []
     for analysis in saved_analyses:
-        # Генерируем временную ссылку на изображение
-        image_url = get_image_url(analysis['image_path'])
-        
         results.append({
             "id": analysis['id'],
             "user_id": analysis['user_id'],
-            "image_url": image_url,
             "analysis_result": json.loads(analysis['analysis_result']),
             "ingredients_count": analysis['ingredients_count'],
             "warnings_count": analysis['warnings_count'],
@@ -539,3 +536,52 @@ async def delete_saved_analysis(
     conn.close()
     
     return {"message": "Анализ успешно удален"}
+
+@router.get("/image/{analysis_id}")
+async def get_analysis_image(
+    analysis_id: int,
+    user = Depends(require_not_banned)
+):
+    """Получение изображения через бэкенд"""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    cur.execute('''
+        SELECT image_path FROM saved_analyses 
+        WHERE id = ? AND user_id = ?
+    ''', (analysis_id, user['id']))
+    
+    analysis = cur.fetchone()
+    conn.close()
+    
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Анализ не найден")
+    
+    try:
+        from ..minio import minio_client
+        from ..config import MINIO_BUCKET_NAME
+        
+        # Получаем объект напрямую из MinIO (без подписанных URL)
+        response = minio_client.get_object(
+            MINIO_BUCKET_NAME, 
+            analysis['image_path']
+        )
+        
+        # Читаем изображение
+        image_data = response.read()
+        response.close()
+        response.release_conn()
+        
+        # Определяем content-type
+        if analysis['image_path'].lower().endswith('.png'):
+            media_type = "image/png"
+        elif analysis['image_path'].lower().endswith('.gif'):
+            media_type = "image/gif"
+        else:
+            media_type = "image/jpeg"
+        
+        return Response(content=image_data, media_type=media_type)
+        
+    except Exception as e:
+        print(f"Error fetching image: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка получения изображения")

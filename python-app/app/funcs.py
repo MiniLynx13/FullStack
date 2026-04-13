@@ -2,7 +2,7 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta
 from .db import get_db_connection
-from .config import ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
+from .config import ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS, OLLAMA_HOST
 import json
 import re
 import asyncio
@@ -230,7 +230,7 @@ async def call_ollama_with_retry(image_base64: str, original_image_data: bytes) 
         
         # ollama.chat() синхронный, поэтому запускаем в потоке
         result = await asyncio.to_thread(
-            ollama.chat,
+            ollama.Client(host=OLLAMA_HOST).chat,
             model='qwen3-vl:4b',
             messages=[
                 {
@@ -239,7 +239,7 @@ async def call_ollama_with_retry(image_base64: str, original_image_data: bytes) 
                     'images': [current_image_base64]
                 }
             ],
-            options={'num_timeout': 300}
+            options={'num_timeout': 420}
         )
         
         elapsed = time.time() - start_time
@@ -266,11 +266,11 @@ async def call_ollama_with_retry(image_base64: str, original_image_data: bytes) 
                 current_image_base64 = base64.b64encode(compressed_data).decode('utf-8')
                 current_image_data = compressed_data
 
-            print(f"  -> Вызов Ollama (таймаут 330 сек)...")
+            print(f"  -> Вызов Ollama (таймаут 4500 сек)...")
             # Здесь async_ollama_call - корутина, которую мы ожидаем
             response = await asyncio.wait_for(
                 async_ollama_call(current_image_base64),
-                timeout=330
+                timeout=450
             )
             
             content = response.get('message', {}).get('content', '')

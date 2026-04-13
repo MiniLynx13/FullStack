@@ -14,6 +14,9 @@ MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY', 'ai_food_analysing')
 MINIO_BUCKET_NAME = os.getenv('MINIO_BUCKET_NAME', 'ingredients')
 MINIO_SECURE = os.getenv('MINIO_SECURE', 'False').lower() == 'true'
 
+# Ollama Configuration
+OLLAMA_HOST = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
+
 # Token Configuration
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv('ACCESS_TOKEN_EXPIRE_MINUTES', 15))
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv('REFRESH_TOKEN_EXPIRE_DAYS', 7))

@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 let isRefreshing = false;
 let refreshPromise: Promise<AuthResponse | null> | null = null;
@@ -588,6 +588,23 @@ export const getSavedAnalyses = async (): Promise<SavedAnalysesResponse> => {
   }
 
   return response.json();
+};
+
+// Получение изображения через бэкенд
+export const getAnalysisImage = async (analysisId: number): Promise<string> => {
+  const token = getToken();
+  const response = await fetch(`${API_BASE_URL}/image/${analysisId}`, {
+    headers: {
+      'Authorization': `Bearer ${token}`
+    }
+  });
+  
+  if (!response.ok) {
+    throw new Error('Ошибка загрузки изображения');
+  }
+  
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
 };
 
 // Удаление сохраненного анализа

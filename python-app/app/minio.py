@@ -75,11 +75,13 @@ def get_image_url(minio_path, expires=timedelta(hours=1)):
             print(f"Error reading fallback image: {e}")
             return None
     try:
-        return minio_client.presigned_get_object(
+        signed_url = minio_client.presigned_get_object(
             MINIO_BUCKET_NAME,
             minio_path,
             expires=expires
         )
+        public_url = signed_url.replace('minio:9000', 'localhost:9000')
+        return public_url
     except Exception as e:
         print(f"Ошибка при генерации ссылки: {e}")
         return None
