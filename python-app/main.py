@@ -2,6 +2,7 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from contextlib import asynccontextmanager
 
 from app.config import CORS_ORIGINS, HOST, PORT
 from app.db import init_db, cleanup_expired_tokens
@@ -31,8 +32,8 @@ app.include_router(analyse.router)
 app.include_router(admin.router)
 app.include_router(seo_router)
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     init_db()
     create_bucket_if_not_exists()
     # Очищаем просроченные токены при запуске приложения

@@ -12,21 +12,8 @@ services:
     volumes:
       - minio_data:/data
     restart: unless-stopped
-
-  minio-init:
-    image: minio/mc:latest
-    container_name: minio-init
-    depends_on:
-      - minio
-    entrypoint: >
-      /bin/sh -c "
-      /usr/bin/mc alias set myminio http://minio:9000 grant_access ai_food_analysing &&
-      /usr/bin/mc mb myminio/ingredients --ignore-existing &&
-      /usr/bin/mc anonymous set download myminio/ingredients &&
-      echo '✅ MinIO bucket configured successfully' &&
-      exit 0
-      "
-    restart: "no"  # Запускается один раз и останавливается
+    networks:
+      - allergydetect_network
 
   ollama:
     image: ollama/ollama:latest
@@ -35,26 +22,16 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
-      - /etc/localtime:/etc/localtime:ro
-      - /etc/timezone:/etc/timezone:ro
     environment:
       - OLLAMA_HOST=0.0.0.0
-    command: serve
-    restart: unless-stopped
-
-  ollama-init:
-    image: ollama/ollama:latest
-    container_name: ollama-init
-    depends_on:
-      - ollama
-    volumes:
-      - ollama_data:/root/.ollama
-      - /etc/localtime:/etc/localtime:ro
-    environment:
-      - OLLAMA_HOST=http://ollama:11434
     entrypoint: /bin/sh
-    command: -c "echo 'Waiting for Ollama...' && sleep 5 && echo 'Checking model...' && ollama list | grep qwen3-vl:4b || ollama pull qwen3-vl:4b && echo 'Model ready!' && exit 0"
-    restart: "no"
+    command: >
+      -c "ollama serve & sleep 5 && 
+      (ollama list | grep qwen3-vl:4b || ollama pull qwen3-vl:4b) && 
+      wait"
+    restart: unless-stopped
+    networks:
+      - allergydetect_network
 
   backend:
     build: ./python-app
@@ -80,10 +57,10 @@ services:
       - ./python-app:/app
     depends_on:
       - minio
-      - minio-init
       - ollama
-      - ollama-init
     restart: unless-stopped
+    networks:
+      - allergydetect_network
 
   frontend:
     build: ./react-app
@@ -93,8 +70,15 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    networks:
+      - allergydetect_network
 
 volumes:
   minio_data:
   ollama_data:
   backend_data:
+
+networks:
+  allergydetect_network:
+    driver: bridge
+    name: allergydetect_network
