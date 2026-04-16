@@ -13,6 +13,9 @@ def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
     
+    # Включаем foreign keys для SQLite
+    cur.execute("PRAGMA foreign_keys = ON;")
+
     # Создание таблицы пользователей
     cur.execute('''
         CREATE TABLE IF NOT EXISTS users (

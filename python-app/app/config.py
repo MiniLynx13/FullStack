@@ -1,8 +1,11 @@
 import os
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Загружаем .env.test если в тестовом режиме
+if os.environ.get('ENVIRONMENT') == 'test':
+    load_dotenv('.env.test')
+else:
+    load_dotenv()
 
 # Database
 DATABASE_PATH = os.getenv('DATABASE_PATH', 'app.db')
