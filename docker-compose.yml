@@ -6,8 +6,8 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: grant_access
-      MINIO_ROOT_PASSWORD: ai_food_analysing
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
@@ -40,17 +40,17 @@ services:
       - "8000:8000"
     environment:
       - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=grant_access
-      - MINIO_SECRET_KEY=ai_food_analysing
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
       - MINIO_BUCKET_NAME=ingredients
       - MINIO_SECURE=false
-      - DATABASE_PATH=/app/data/app.db
-      - ACCESS_TOKEN_EXPIRE_MINUTES=15
-      - REFRESH_TOKEN_EXPIRE_DAYS=7
-      - CORS_ORIGINS=http://localhost:3000
+      - DATABASE_PATH=${DATABASE_PATH:-/app/data/app.db}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+      - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
       - HOST=0.0.0.0
       - PORT=8000
-      - ENVIRONMENT=development
+      - ENVIRONMENT=${ENVIRONMENT:-development}
       - OLLAMA_HOST=http://ollama:11434
     volumes:
       - backend_data:/app/data
