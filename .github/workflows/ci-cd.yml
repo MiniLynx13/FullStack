@@ -26,22 +26,22 @@ jobs:
       - name: Run Backend Tests
         working-directory: ./python-app
         env:
-          ENVIRONMENT: test
+          ENVIRONMENT: "test"
           DATABASE_PATH: ":memory:"
-          MINIO_ENDPOINT: localhost:9000
-          MINIO_ACCESS_KEY: test_access
-          MINIO_SECRET_KEY: test_secret
-          MINIO_BUCKET_NAME: test_bucket
+          MINIO_ENDPOINT: "localhost:9000"
+          MINIO_ACCESS_KEY: "test_access"
+          MINIO_SECRET_KEY: "test_secret"
+          MINIO_BUCKET_NAME: "test_bucket"
           MINIO_SECURE: "false"
-          OLLAMA_HOST: http://localhost:11434
+          OLLAMA_HOST: "http://localhost:11434"
           ACCESS_TOKEN_EXPIRE_MINUTES: "15"
           REFRESH_TOKEN_EXPIRE_DAYS: "7"
-          CORS_ORIGINS: http://localhost:3000
+          CORS_ORIGINS: "http://localhost:3000"
         run: |
           python -m pip install --upgrade pip
           pip install pytest pytest-cov pytest-asyncio httpx
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pytest tests/ -v --tb=short -p no:asyncio
+          pytest tests/backend/ -v --tb=short -p no:asyncio
 
       # === ФРОНТЕНД ТЕСТЫ ===
       - name: Setup Node.js
