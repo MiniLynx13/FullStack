@@ -3,9 +3,9 @@ FROM node:18-alpine AS builder
 
 WORKDIR /app
 
-# Копируем package.json и package-lock.json
+# Копируем package.json (package-lock.json опционально)
 COPY package*.json ./
-RUN npm ci --silent
+RUN npm install
 
 # Копируем исходный код и собираем
 COPY . .
