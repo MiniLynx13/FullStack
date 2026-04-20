@@ -21,13 +21,13 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Run Backend Tests
         working-directory: ./python-app
         env:
           ENVIRONMENT: test
-          DATABASE_PATH: :memory:
+          DATABASE_PATH: ":memory:"
           MINIO_ENDPOINT: localhost:9000
           MINIO_ACCESS_KEY: test_access
           MINIO_SECRET_KEY: test_secret
