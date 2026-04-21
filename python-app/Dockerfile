@@ -7,13 +7,14 @@ RUN apt-get update && apt-get install -y \
 	gcc \
 	libjpeg-dev \
 	zlib1g-dev \
+	curl \
 	&& rm -rf /var/lib/apt/lists/*
 
 # Копируем зависимости и устанавливаем их
 COPY req.txt .
 RUN pip install --no-cache-dir -r req.txt
 
-# Копируем исходный код (исключая venv и source через .dockerignore)
+# Копируем исходный код
 COPY . .
 
 # Создаем папку для базы данных
