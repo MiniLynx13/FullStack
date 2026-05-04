@@ -210,6 +210,8 @@ function Photo() {
   const [analysisToDelete, setAnalysisToDelete] = useState<number | null>(null);
   const [showSafe, setShowSafe] = useState(true);
   const [showWarnings, setShowWarnings] = useState(true);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   const handleImageSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -242,17 +244,38 @@ function Photo() {
       return;
     }
 
+    // Создаем новый AbortController для этого запроса
+    const controller = new AbortController();
+    setAbortController(controller);
+    
     setLoading(true);
     setError(null);
     setSuccess(null);
+    setIsCancelling(false);
 
     try {
-      const result = await analyzeImage(selectedImage);
+      const result = await analyzeImage(selectedImage, controller.signal);
       setAnalysisResult(result);
+      setAbortController(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Произошла ошибка при анализе');
+      if (err instanceof Error && err.message === 'Анализ отменен') {
+        setError('Анализ был прерван пользователем');
+      } else {
+        setError(err instanceof Error ? err.message : 'Произошла ошибка при анализе');
+      }
+      setAbortController(null);
     } finally {
       setLoading(false);
+      setIsCancelling(false);
+    }
+  };
+
+  // Функция отмены анализа
+  const handleCancelAnalysis = () => {
+    if (abortController) {
+      setIsCancelling(true);
+      abortController.abort();
+      setAbortController(null);
     }
   };
 
@@ -647,39 +670,50 @@ function Photo() {
                 </Box>
               )}
 
-              {/* Кнопка анализа */}
+              {/* Кнопка анализа и отмены */}
               {selectedImage && (
                 <Box mb={6}>
-                  <Button
-                    onClick={handleAnalyze}
-                    colorScheme="blue"
-                    size="lg"
-                    width="100%"
-                    bg="blue.50"
-                    color="blue.800"
-                    border="2px solid"
-                    borderColor="blue.700"
-                    _hover={{ 
-                      bg: 'blue.100',
-                      borderColor: 'blue.800' 
-                    }}
-                    _active={{ 
-                      bg: 'blue.200',
-                      borderColor: 'blue.900' 
-                    }}
-                    loading={loading}
-                    loadingText="Анализ..."
-                  >
-                    Анализировать изображение
-                  </Button>
+                  {loading ? (
+                    <Flex direction="column" gap={3}>
+                      <Button
+                        onClick={handleCancelAnalysis}
+                        colorScheme="blue"
+                        size="lg"
+                        variant="outline"
+                        borderColor="blue.300"
+                        width="100%"
+                        disabled={isCancelling}
+                        _hover={{ borderColor: 'blue.400' }}
+                      >
+                        {isCancelling ? 'Отмена...' : 'Отменить анализ'}
+                      </Button>
+                      <Flex justify="center" my={6}>
+                        <Spinner size="xl" color="blue.500" />
+                      </Flex>
+                    </Flex>
+                  ) : (
+                    <Button
+                      onClick={handleAnalyze}
+                      colorScheme="blue"
+                      size="lg"
+                      width="100%"
+                      bg="blue.50"
+                      color="blue.800"
+                      border="2px solid"
+                      borderColor="blue.700"
+                      _hover={{ 
+                        bg: 'blue.100',
+                        borderColor: 'blue.800' 
+                      }}
+                      _active={{ 
+                        bg: 'blue.200',
+                        borderColor: 'blue.900' 
+                      }}
+                    >
+                      Анализировать изображение
+                    </Button>
+                  )}
                 </Box>
-              )}
-
-              {/* Индикатор загрузки */}
-              {loading && (
-                <Flex justify="center" my={6}>
-                  <Spinner size="xl" color="blue.500" />
-                </Flex>
               )}
 
               {/* Результаты анализа */}

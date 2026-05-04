@@ -459,7 +459,10 @@ export interface ImageAnalysisResponse {
 }
 
 // Анализ изображения
-export const analyzeImage = async (imageFile: File): Promise<ImageAnalysisResponse> => {
+export const analyzeImage = async (
+  imageFile: File, 
+  signal?: AbortSignal  // Добавляем опциональный сигнал для отмены
+): Promise<ImageAnalysisResponse> => {
   const formData = new FormData();
   formData.append('image', imageFile);
 
@@ -469,6 +472,7 @@ export const analyzeImage = async (imageFile: File): Promise<ImageAnalysisRespon
     const response = await authFetch(`${API_BASE_URL}/analyze-image`, {
       method: 'POST',
       body: formData,
+      signal,  // Передаем сигнал в fetch
     });
 
     if (!response.ok) {
@@ -507,6 +511,11 @@ export const analyzeImage = async (imageFile: File): Promise<ImageAnalysisRespon
 
     return response.json();
   } catch (error) {
+    // Проверяем, была ли отмена запроса
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.log('Анализ был отменен пользователем');
+      throw new Error('Анализ отменен');
+    }
     console.error('Network error:', error);
     throw new Error('Ошибка сети при отправке изображения');
   }
